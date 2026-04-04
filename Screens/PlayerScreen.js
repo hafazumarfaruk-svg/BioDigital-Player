@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+// NativeModules ইমপোর্ট করা হয়েছে
 import { View, StyleSheet, Text, ActivityIndicator, TouchableOpacity, FlatList, Image, Dimensions, StatusBar, SafeAreaView, ScrollView, NativeModules } from 'react-native';
 import { Video, Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
 
-// নেটিভ মডিউল ইমপোর্ট করা হলো
-const { YtDlpModule } = NativeModules;
+// কাস্টম কোটলিন মডিউলটিকে জাভাস্ক্রিপ্টে কল করার জন্য যুক্ত করা হলো
+const { YtdlpModule } = NativeModules;
 
-// কোয়ালিটি স্ট্রিং থেকে সঠিক রেজোলিউশন বের করার পারফেক্ট ফাংশন
 const getNumericQuality = (q) => {
     if (!q) return '720';
     if (q.includes('Auto') || q.includes('Normal')) return '720';
-    // ডাটা সেভার বা ৭৫পি সিলেক্ট করলে ১৪৪ পাঠানো হবে
     if (q.includes('75p') || q.includes('Anti') || q.includes('Low')) return '144'; 
     if (q.includes('144p')) return '144';
     if (q.includes('240p')) return '240';
@@ -24,7 +24,7 @@ const getNumericQuality = (q) => {
     if (q.includes('1440p') || q.includes('2K')) return '1440';
     if (q.includes('2160p') || q.includes('4K') || q.toLowerCase().includes('4k')) return '2160';
     if (q.includes('4320p') || q.includes('8K') || q.toLowerCase().includes('8k')) return '4320';
-    return '720'; // কোনো কিছু না মিললে ডিফল্ট 720p
+    return '720'; 
 };
 
 export default function PlayerScreen({ route, navigation }) {
@@ -37,7 +37,7 @@ export default function PlayerScreen({ route, navigation }) {
   const [loadingUrl, setLoadingUrl] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
   
-  const [currentQuality, setCurrentQuality] = useState(global.appSettings?.normalVideo || '720p');
+  const [currentQuality, setCurrentQuality] = useState('720p');
   const [actualPlayingQuality, setActualPlayingQuality] = useState('Loading...'); 
 
   const [captions, setCaptions] = useState([]); 
@@ -49,6 +49,7 @@ export default function PlayerScreen({ route, navigation }) {
   
   const videoPlayerRef = useRef(null);
   const audioPlayerRef = useRef(new Audio.Sound()); 
+  const appliedQualityRef = useRef('720p'); 
 
   useLayoutEffect(() => {
     navigation.setOptions({ headerShown: false });
@@ -62,49 +63,57 @@ export default function PlayerScreen({ route, navigation }) {
   }, []);
 
   useEffect(() => {
-    setVideoUrl(null);
-    setAudioUrl(null);
-    setLoadingUrl(true);
-    setErrorMessage(null);
-    setSelectedCC(null);
-    setCaptions([]);
-    if (audioPlayerRef.current) audioPlayerRef.current.unloadAsync();
-    
-    const initialQuality = global.appSettings?.normalVideo || '720p';
-    setCurrentQuality(initialQuality);
-    fetchVideoUsingNativeModule(initialQuality);
-    fetchRelatedVideos(false);
+    const initializePlayer = async () => {
+      setVideoUrl(null);
+      setAudioUrl(null);
+      setLoadingUrl(true);
+      setErrorMessage(null);
+      setSelectedCC(null);
+      setCaptions([]);
+      if (audioPlayerRef.current) await audioPlayerRef.current.unloadAsync();
+      
+      const savedQuality = await AsyncStorage.getItem('@normalVideoQuality') || '720p';
+      appliedQualityRef.current = savedQuality;
+      setCurrentQuality(savedQuality);
+      
+      fetchVideoFromNativeModule(savedQuality);
+      fetchRelatedVideos(false);
+    };
+    initializePlayer();
   }, [videoId]);
 
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      const savedQuality = global.appSettings?.normalVideo || '720p';
-      if (savedQuality !== currentQuality) {
-        setCurrentQuality(savedQuality);
-        setVideoUrl(null); 
-        setAudioUrl(null);
-        if (audioPlayerRef.current) audioPlayerRef.current.unloadAsync();
-        setLoadingUrl(true);
-        setActualPlayingQuality('Switching...');
-        fetchVideoUsingNativeModule(savedQuality);
+    const unsubscribe = navigation.addListener('focus', async () => {
+      const savedQuality = await AsyncStorage.getItem('@normalVideoQuality') || '720p';
+      
+      if (appliedQualityRef.current !== savedQuality) {
+          appliedQualityRef.current = savedQuality; 
+          setCurrentQuality(savedQuality); 
+          
+          setVideoUrl(null); 
+          setAudioUrl(null);
+          if (audioPlayerRef.current) await audioPlayerRef.current.unloadAsync();
+          setLoadingUrl(true);
+          setActualPlayingQuality('Switching...');
+          
+          fetchVideoFromNativeModule(savedQuality);
       }
     });
     return unsubscribe;
-  }, [navigation, currentQuality, videoId]);
+  }, [navigation, videoId]);
 
-  // নতুন ফাংশন: যা সরাসরি জাভা নেটিভ মডিউলকে কল করবে
-  const fetchVideoUsingNativeModule = async (qualityStr) => {
+  // HTTP Request (fetch) মুছে ফেলে সরাসরি Native Bridge কল করার লজিক
+  const fetchVideoFromNativeModule = async (qualityStr) => {
     try {
-      setLoadingUrl(true);
       const numericQuality = getNumericQuality(qualityStr);
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
       
-      // NativeModule কল করা হচ্ছে (action = 'play')
-      const resultString = await YtDlpModule.extractVideoInfo(targetUrl, numericQuality, 'play');
+      // 코টলিন ফাইলে থাকা extractVideoInfo ফাংশনকে কল করা হচ্ছে
+      const resultString = await YtdlpModule.extractVideoInfo(targetUrl, numericQuality.toString());
       const data = JSON.parse(resultString);
 
       if (data.success && data.url) {
-        setStreamMode(data.streamType);
+        setStreamMode(data.streamType || 'combined');
         setVideoUrl(data.url);
         
         if(qualityStr.includes('75p') || qualityStr.includes('Anti')) {
@@ -120,11 +129,10 @@ export default function PlayerScreen({ route, navigation }) {
             await audioPlayerRef.current.loadAsync({ uri: data.audioUrl });
         }
       } else {
-        setErrorMessage(data.error || "লিংক বের করতে সমস্যা হয়েছে।");
+        setErrorMessage(data.error || "লিংক বের করতে সমস্যা হয়েছে।");
       }
     } catch (error) {
-      setErrorMessage("ভিডিও প্রসেস করা যাচ্ছে না (Native Error)।");
-      console.error("Native Module Error:", error);
+      setErrorMessage(`অ্যান্ড্রয়েড নেটিভ এরর: ${error.message || "Unknown Error"}`);
     } finally {
       setLoadingUrl(false);
     }
