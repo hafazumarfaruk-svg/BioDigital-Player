@@ -11,20 +11,19 @@ export default function ChannelScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const isFocused = useIsFocused();
-  
+
   const { channelData = {}, channelName: paramChannelName, channelAvatar: paramAvatar } = route.params || {};
   const channelName = channelData?.channel || paramChannelName || 'YouTube Channel';
   const channelAvatar = channelData?.avatar || paramAvatar || 'https://upload.wikimedia.org/wikipedia/commons/7/7e/Circle-icons-profile.svg';
 
-  // ডিফল্টভাবে Videos ট্যাব সিলেক্ট করা হলো
   const [activeTab, setActiveTab] = useState('Videos');
   const [loading, setLoading] = useState(true);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [thumbQuality, setThumbQuality] = useState('High');
+  // ডিফল্ট ব্যানার হিসেবে একটি ডার্ক কালার বা প্লেসহোল্ডার রাখা হলো
   const [channelBanner, setChannelBanner] = useState('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1000&auto=format&fit=crop');
   const [subscriberCount, setSubscriberCount] = useState('N/A');
 
-  // শুধুমাত্র Videos এবং Shorts রাখা হলো
   const [tabData, setTabData] = useState({ Videos: [], Shorts: [] });
 
   useEffect(() => {
@@ -49,12 +48,16 @@ export default function ChannelScreen() {
   const extractChannelDataRecursively = (node, categorizedData) => {
     const parseVid = (vid) => {
       const duration = vid.lengthText?.simpleText || '';
-      const publishedTime = vid.publishedTimeText?.simpleText || ''; // আপলোড সময়
+      const publishedTime = vid.publishedTimeText?.simpleText || ''; 
       
+      // আপডেট: টাইটেল এবং ভিউজ বের করার লজিক আরও উন্নত করা হলো
+      const title = vid.title?.runs?.[0]?.text || vid.title?.simpleText || 'No Title';
+      const views = vid.shortViewCountText?.simpleText || vid.viewCountText?.simpleText || '';
+
       return {
         id: String(vid.videoId),
-        title: String(vid.title?.runs?.[0]?.text || 'No Title'),
-        views: String(vid.viewCountText?.simpleText || vid.shortViewCountText?.simpleText || 'N/A'),
+        title: String(title),
+        views: String(views),
         publishedTime: String(publishedTime),
         duration: String(duration),
         thumbnail: thumbQuality === 'Data Saver' ? `https://i.ytimg.com/vi/${vid.videoId}/mqdefault.jpg` : `https://i.ytimg.com/vi/${vid.videoId}/hqdefault.jpg`,
@@ -72,10 +75,12 @@ export default function ChannelScreen() {
         if (parsedVid.duration.length > 0 && parsedVid.duration.length <= 5) categorizedData.Shorts.push(parsedVid);
         else categorizedData.Videos.push(parsedVid);
       } else if (node.reelItemRenderer && node.reelItemRenderer.videoId) {
+        const title = node.reelItemRenderer.headline?.simpleText || node.reelItemRenderer.title?.simpleText || 'Short Video';
+        const views = node.reelItemRenderer.viewCountText?.simpleText || 'N/A';
         const parsedShort = {
           id: String(node.reelItemRenderer.videoId), 
-          title: String(node.reelItemRenderer.headline?.simpleText || 'Short Video'),
-          views: String(node.reelItemRenderer.viewCountText?.simpleText || 'N/A'),
+          title: String(title),
+          views: String(views),
           thumbnail: thumbQuality === 'Data Saver' ? `https://i.ytimg.com/vi/${node.reelItemRenderer.videoId}/mqdefault.jpg` : `https://i.ytimg.com/vi/${node.reelItemRenderer.videoId}/hqdefault.jpg`,
           channel: channelName, 
           avatar: channelAvatar, 
@@ -94,25 +99,26 @@ export default function ChannelScreen() {
       const searchResponse = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(channelName)}`, { headers: { 'User-Agent': DESKTOP_AGENT } });
       const searchHtml = await searchResponse.text();
       let searchMatch = searchHtml.match(/ytInitialData\s*=\s*({.+?});/) || searchHtml.match(/var ytInitialData = (.*?);<\/script>/);
-      
+
       let targetUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(channelName)}`;
       if (searchMatch && searchMatch[1]) {
         const searchData = JSON.parse(searchMatch[1]);
-        let channelRenderer = null;
-        const findChannel = (node) => {
-          if(channelRenderer) return;
-          if (Array.isArray(node)) node.forEach(findChannel);
-          else if (node && typeof node === 'object') {
-            if (node.channelRenderer && node.channelRenderer.title?.simpleText?.toLowerCase().includes(channelName.toLowerCase().split(' ')[0])) channelRenderer = node.channelRenderer;
-            else Object.values(node).forEach(findChannel);
+        let channelUrl = null;
+
+        const findChannelUrl = (node) => {
+          if (channelUrl) return;
+          if (node?.channelRenderer) {
+            const title = node.channelRenderer.title?.simpleText || "";
+            if (title.toLowerCase().includes(channelName.toLowerCase().split(' ')[0])) {
+              channelUrl = node.channelRenderer.navigationEndpoint?.commandMetadata?.webCommandMetadata?.url;
+            }
+          }
+          if (node && typeof node === 'object') {
+            Object.values(node).forEach(child => findChannelUrl(child));
           }
         };
-        findChannel(searchData);
-
-        if (channelRenderer) {
-          const urlPath = channelRenderer.navigationEndpoint?.commandMetadata?.webCommandMetadata?.url;
-          if (urlPath) targetUrl = `https://www.youtube.com${urlPath}`;
-        }
+        findChannelUrl(searchData);
+        if (channelUrl) targetUrl = `https://www.youtube.com${channelUrl}/videos`;
       }
 
       const channelResponse = await fetch(targetUrl, { headers: { 'User-Agent': DESKTOP_AGENT } });
@@ -121,23 +127,37 @@ export default function ChannelScreen() {
 
       const categorizedData = { Videos: [], Shorts: [] };
       if (channelMatch && channelMatch[1]) {
-         const parsedData = JSON.parse(channelMatch[1]);
-         
-         // ব্যানার এবং সাবস্ক্রাইবার সংখ্যা বের করার লজিক
-         const headerRenderer = parsedData?.header?.c4TabbedHeaderRenderer || parsedData?.header?.pageHeaderRenderer;
-         if (headerRenderer) {
-           const banners = headerRenderer.banner?.thumbnails || headerRenderer.pageHeaderBanner?.pageHeaderBannerImageViewModel?.image?.sources;
-           if (banners && banners.length > 0) {
-             setChannelBanner(banners[banners.length - 1].url);
-           }
-           const subsText = headerRenderer.subscriberCountText?.simpleText || headerRenderer.pageHeaderViewModel?.metadata?.metadataRows?.[1]?.metadataParts?.[0]?.text?.content;
-           if (subsText) setSubscriberCount(subsText);
-         }
+        const parsedData = JSON.parse(channelMatch[1]);
 
-         extractChannelDataRecursively(parsedData, categorizedData);
+        // আপডেট: ব্যানার বের করার আরও নিখুঁত লজিক
+        const header = parsedData?.header?.c4TabbedHeaderRenderer || parsedData?.header?.pageHeaderRenderer;
+        
+        let bannerSrc = null;
+        if (header?.banner?.thumbnails) {
+            bannerSrc = header.banner.thumbnails;
+        } else if (header?.pageHeaderBanner?.pageHeaderBannerImageViewModel?.image?.sources) {
+            bannerSrc = header.pageHeaderBanner.pageHeaderBannerImageViewModel.image.sources;
+        } else if (header?.content?.pageHeaderViewModel?.banner?.imageBannerViewModel?.image?.sources) {
+            bannerSrc = header.content.pageHeaderViewModel.banner.imageBannerViewModel.image.sources;
+        }
+
+        if (bannerSrc && bannerSrc.length > 0) {
+          setChannelBanner(bannerSrc[bannerSrc.length - 1].url);
+        }
+
+        const subs = header?.subscriberCountText?.simpleText || 
+                     header?.content?.pageHeaderViewModel?.metadata?.metadataRows?.[0]?.metadataParts?.[0]?.text?.content ||
+                     header?.content?.pageHeaderViewModel?.metadata?.metadataRows?.[1]?.metadataParts?.[0]?.text?.content;
+        if (subs) setSubscriberCount(subs);
+
+        extractChannelDataRecursively(parsedData, categorizedData);
       }
       setTabData(categorizedData);
-    } catch (error) {} finally { setLoading(false); }
+    } catch (error) {
+      console.error(error);
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const handleSubscriptionToggle = async () => {
@@ -171,6 +191,8 @@ export default function ChannelScreen() {
         </TouchableOpacity>
       );
     }
+    
+    // আপডেট: আসল ইউটিউবের মতো থাম্বনেইল ছোট করে দেখানোর জন্য লেআউট পরিবর্তন
     return (
       <View style={styles.videoCard}>
         <TouchableOpacity style={styles.thumbnailContainer} activeOpacity={0.8} onPress={() => navigation.navigate('Player', { videoId: item.id, videoData: item })}>
@@ -178,11 +200,27 @@ export default function ChannelScreen() {
           {item.duration ? <Text style={styles.durationBadge}>{item.duration}</Text> : null}
         </TouchableOpacity>
         <View style={styles.videoInfoContainer}>
-          <TouchableOpacity style={styles.videoTextContainer} activeOpacity={0.8} onPress={() => navigation.navigate('Player', { videoId: item.id, videoData: item })}>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => navigation.navigate('Player', { videoId: item.id, videoData: item })}>
             <Text style={styles.videoTitle} numberOfLines={2}>{item.title}</Text>
-            <Text style={styles.videoMeta}>{item.views} {item.publishedTime ? `• ${item.publishedTime}` : ''}</Text>
+            <Text style={styles.videoMeta}>
+              {item.views ? `${item.views}` : ''}
+              {item.views && item.publishedTime ? ' • ' : ''}
+              {item.publishedTime ? `${item.publishedTime}` : ''}
+            </Text>
           </TouchableOpacity>
         </View>
+      </View>
+    );
+  };
+
+  // আপডেট: ভিডিও না থাকলে মেসেজ দেখানোর কম্পোনেন্ট
+  const renderEmptyComponent = () => {
+    if (loading) return null;
+    return (
+      <View style={styles.emptyStateContainer}>
+        <Text style={styles.emptyStateText}>
+          {activeTab === 'Shorts' ? 'No short video' : 'No videos found'}
+        </Text>
       </View>
     );
   };
@@ -234,15 +272,17 @@ export default function ChannelScreen() {
            <Ionicons name="home" size={22} color="#FFF" />
         </TouchableOpacity>
       </View>
-      
+
       <FlatList 
         key={activeTab === 'Shorts' ? 'grid-2' : 'list-1'} 
         numColumns={activeTab === 'Shorts' ? 2 : 1} 
         data={tabData[activeTab] || []} 
         renderItem={renderItem} 
         keyExtractor={(item, index) => item.id + index.toString()} 
-        ListHeaderComponent={ChannelHeader} 
+        ListHeaderComponent={ChannelHeader}
+        ListEmptyComponent={renderEmptyComponent} 
         showsVerticalScrollIndicator={false} 
+        contentContainerStyle={{ paddingBottom: 20 }}
       />
     </SafeAreaView>
   );
@@ -269,17 +309,23 @@ const styles = StyleSheet.create({
   activeTabButton: { borderBottomWidth: 2, borderBottomColor: '#FFF' },
   tabText: { color: '#AAA', fontSize: 15, fontWeight: '500' },
   activeTabText: { color: '#FFF', fontWeight: 'bold' },
-  videoCard: { marginBottom: 20, marginTop: 10 },
-  thumbnailContainer: { width: '100%', height: 210, position: 'relative', backgroundColor: '#111' },
+  
+  // আপডেট: ভিডিও কার্ডের স্টাইল (থাম্বনেইল ছোট করে List লেআউট)
+  videoCard: { flexDirection: 'row', marginBottom: 15, paddingHorizontal: 10, marginTop: 10 },
+  thumbnailContainer: { width: 160, height: 90, position: 'relative', backgroundColor: '#222', borderRadius: 8, overflow: 'hidden' },
   thumbnailImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-  durationBadge: { position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.8)', color: '#FFF', fontSize: 12, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, fontWeight: 'bold' },
-  videoInfoContainer: { flexDirection: 'row', padding: 12, alignItems: 'flex-start' },
-  videoTextContainer: { flex: 1, paddingRight: 10 },
-  videoTitle: { color: '#FFF', fontSize: 15, fontWeight: '500', marginBottom: 4, lineHeight: 20 },
+  durationBadge: { position: 'absolute', bottom: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.8)', color: '#FFF', fontSize: 11, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, fontWeight: 'bold' },
+  videoInfoContainer: { flex: 1, paddingLeft: 12, justifyContent: 'flex-start', paddingTop: 2 },
+  videoTitle: { color: '#FFF', fontSize: 14, fontWeight: '500', marginBottom: 6, lineHeight: 20 },
   videoMeta: { color: '#AAA', fontSize: 12 },
+  
   shortGridItem: { width: (width / 2) - 10, margin: 5, position: 'relative', backgroundColor: '#111', borderRadius: 8, overflow: 'hidden' },
   shortGridImage: { width: '100%', height: 250, resizeMode: 'cover' },
   shortViewsOverlay: { position: 'absolute', bottom: 55, left: 5, flexDirection: 'row', alignItems: 'center' },
   shortViewsText: { color: '#FFF', fontSize: 12, fontWeight: 'bold', marginLeft: 3, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 2 },
-  shortTitle: { color: '#FFF', fontSize: 13, fontWeight: '500', lineHeight: 18 }
+  shortTitle: { color: '#FFF', fontSize: 13, fontWeight: '500', lineHeight: 18 },
+
+  // আপডেট: Empty State এর স্টাইল
+  emptyStateContainer: { padding: 40, alignItems: 'center', justifyContent: 'center' },
+  emptyStateText: { color: '#AAA', fontSize: 16, fontWeight: '500' }
 });
