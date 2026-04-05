@@ -1,22 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, ActivityIndicator, TouchableOpacity, FlatList, Image, Dimensions, StatusBar, SafeAreaView, ScrollView, BackHandler, Linking, Modal } from 'react-native';
+import { View, StyleSheet, Text, ActivityIndicator, TouchableOpacity, FlatList, Image, Dimensions, StatusBar, SafeAreaView, ScrollView, BackHandler, Modal, Alert } from 'react-native';
 import { Video } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications'; // নোটিফিকেশন যুক্ত করা হলো
+import { DeviceEventEmitter } from 'react-native';
+import * as FileSystem from 'expo-file-system'; // রিয়েল-টাইম ডাউনলোডের জন্য যুক্ত করা হলো
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
-
-// নোটিফিকেশন কনফিগারেশন
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
 
 export default function PlayerScreen({ route, navigation }) {
   const { videoId, videoData = {} } = route?.params || {};
@@ -30,11 +22,29 @@ export default function PlayerScreen({ route, navigation }) {
   const [downloadStep, setDownloadStep] = useState('selection'); 
   const [downloadLinks, setDownloadLinks] = useState([]);
   const [downloadType, setDownloadType] = useState('');
+  
+  // লাইভ প্রোগ্রেস ট্র্যাকিং স্টেট
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   useEffect(() => {
     checkSubscriptionStatus();
     fetchRelatedVideos(false);
   }, [videoId]);
+
+  useEffect(() => {
+    const backAction = () => {
+      if (isDownloading) {
+          Alert.alert("ডাউনলোড চলছে", "ডাউনলোড চলাকালীন সময়ে ভিডিও বন্ধ করা যাবে না।");
+          return true;
+      }
+      DeviceEventEmitter.emit('minimizeVideo');
+      navigation.goBack();
+      return true; 
+    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove(); 
+  }, [isDownloading]);
 
   const checkSubscriptionStatus = async () => {
     try {
@@ -49,30 +59,41 @@ export default function PlayerScreen({ route, navigation }) {
       let subs = await AsyncStorage.getItem('subscribedChannels');
       subs = subs ? JSON.parse(subs) : [];
       const exists = subs.some(s => s.name === videoData.channel);
-      if (exists) {
-        subs = subs.filter(s => s.name !== videoData.channel);
-      } else {
-        subs.push({ id: Date.now().toString(), name: videoData.channel, avatar: videoData.avatar });
-      }
+      if (exists) subs = subs.filter(s => s.name !== videoData.channel);
+      else subs.push({ id: Date.now().toString(), name: videoData.channel, avatar: videoData.avatar });
+      
       await AsyncStorage.setItem('subscribedChannels', JSON.stringify(subs));
       setIsSubscribed(!exists);
     } catch (e) {}
   };
 
-  // ডাউনলোড রেকর্ড সেভ এবং নোটিফিকেশন লজিক
+  // রিয়েল-টাইম ডাউনলোড এক্সিকিউশন অ্যালগরিদম
   const handleDownloadExecute = async (item) => {
     try {
-      // ১. নোটিফিকেশন পাঠানো
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "ডাউনলোড শুরু হয়েছে",
-          body: `${videoData.title} (${item.quality}) ডাউনলোড হচ্ছে...`,
-          data: { url: item.url },
-        },
-        trigger: null,
-      });
+      setShowDownloadModal(false);
+      setIsDownloading(true);
+      setDownloadProgress(0);
 
-      // ২. মেটাডেটা লোকাল স্টোরেজে সেভ করা
+      // ফাইলের নাম ও লোকাল লোকেশন তৈরি
+      const safeTitle = (videoData.title || 'video').replace(/[^a-zA-Z0-9]/g, '_');
+      const fileExt = downloadType === 'audio' ? 'mp3' : 'mp4';
+      const fileUri = `${FileSystem.documentDirectory}${safeTitle}_${item.quality}.${fileExt}`;
+
+      // ডাউনলোড প্রসেস ইনিশিয়ালাইজ
+      const downloadResumable = FileSystem.createDownloadResumable(
+        item.url,
+        fileUri,
+        {},
+        (downloadInfo) => {
+          const progress = downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite;
+          setDownloadProgress(progress); // রিয়েল-টাইম ডেটা আপডেট
+        }
+      );
+
+      // ডাউনলোড শুরু এবং অপেক্ষা
+      const { uri } = await downloadResumable.downloadAsync();
+
+      // ডাউনলোড শেষ হলে মেটাডেটা সেভ করা
       const existingDownloads = await AsyncStorage.getItem('recorded_downloads');
       let downloadList = existingDownloads ? JSON.parse(existingDownloads) : [];
       
@@ -83,18 +104,18 @@ export default function PlayerScreen({ route, navigation }) {
         thumbnail: videoData.thumbnail,
         quality: item.quality,
         type: downloadType,
-        url: item.url,
+        url: uri, // এখন এটি লোকাল অফলাইন লিংক
         date: new Date().toLocaleDateString()
       };
 
       downloadList.unshift(newDownload);
       await AsyncStorage.setItem('recorded_downloads', JSON.stringify(downloadList));
 
-      // ৩. ব্রাউজার বা ডাউনলোডারে পাঠানো
-      Linking.openURL(item.url);
-      setShowDownloadModal(false);
+      setIsDownloading(false);
+      Alert.alert("সফল", "ডাউনলোড সফলভাবে সম্পন্ন হয়েছে এবং মেমোরিতে সেভ হয়েছে!");
     } catch (error) {
-      console.error(error);
+      setIsDownloading(false);
+      Alert.alert("ত্রুটি", "সার্ভার বা নেটওয়ার্ক সমস্যার কারণে ডাউনলোড ব্যর্থ হয়েছে।");
     }
   };
 
@@ -189,13 +210,28 @@ export default function PlayerScreen({ route, navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="#0F0F0F" barStyle="light-content" />
+      
       <View style={styles.appHeader}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerIconBtn}><Ionicons name="chevron-down" size={32} color="#FFF" /></TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerIconBtn} disabled={isDownloading}>
+           <Ionicons name="chevron-down" size={32} color={isDownloading ? "#555" : "#FFF"} />
+        </TouchableOpacity>
         <View style={{flex: 1}} />
-        <TouchableOpacity onPress={() => navigation.navigate('Search')} style={styles.headerIconBtn}><Ionicons name="search" size={24} color="#FFF" /></TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.navigate('Search')} style={styles.headerIconBtn}>
+           <Ionicons name="search" size={24} color="#FFF" />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.playerWrapper}></View>
+
+      {/* ইন-অ্যাপ লাইভ প্রোগ্রেস ইন্ডিকেটর */}
+      {isDownloading && (
+        <View style={styles.progressContainer}>
+           <Text style={styles.progressText}>ডাউনলোড হচ্ছে... {Math.round(downloadProgress * 100)}%</Text>
+           <View style={styles.progressBarBg}>
+              <View style={[styles.progressBarFill, { width: `${downloadProgress * 100}%` }]} />
+           </View>
+        </View>
+      )}
 
       <FlatList 
         ListHeaderComponent={renderHeader}
@@ -262,6 +298,13 @@ const styles = StyleSheet.create({
     appHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, height: 50 },
     headerIconBtn: { padding: 10 },
     playerWrapper: { width: '100%', height: PLAYER_HEIGHT, backgroundColor: 'transparent' },
+    
+    // প্রোগ্রেস বারের স্টাইল
+    progressContainer: { backgroundColor: '#1E1E1E', padding: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
+    progressText: { color: '#00BFA5', fontSize: 14, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' },
+    progressBarBg: { height: 6, backgroundColor: '#333', borderRadius: 3, overflow: 'hidden' },
+    progressBarFill: { height: '100%', backgroundColor: '#00BFA5' },
+
     titleSection: { padding: 12 },
     mainTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
     metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
