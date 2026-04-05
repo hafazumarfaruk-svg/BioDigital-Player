@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import * as NavigationBar from 'expo-navigation-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native'; // ইভেন্ট এমিটার ইমপোর্ট করা হলো
 
 import SettingsScreen from '../Settings/SettingsScreen';
 import ShortsScreen from './ShortsScreen'; 
@@ -118,6 +119,14 @@ export default function HomeScreen({ route }) {
     } catch (e) {}
   };
 
+  // ১০০% জিরো লোডিংয়ের জন্য গ্লোবাল ইভেন্ট ফায়ার করা হচ্ছে
+  const handleVideoPress = (item) => {
+    DeviceEventEmitter.emit('playVideo', { videoId: item.id, videoData: item });
+    navigation.navigate('Player', { videoId: item.id, videoData: item });
+  };
+  
+  const handleChannelPress = (item) => navigation.navigate('Channel', { channelData: item });
+
   const renderVideoItem = ({ item }) => {
     if (item.type === 'shorts_shelf') {
       return (
@@ -139,15 +148,15 @@ export default function HomeScreen({ route }) {
     const isSubscribed = subscribedChannels.some(sub => sub.name === item.channel);
     return (
       <View style={styles.videoCard}>
-        <TouchableOpacity activeOpacity={0.9} onPress={() => navigation.navigate('Player', { videoId: item.id, videoData: item })}>
+        <TouchableOpacity activeOpacity={0.9} onPress={() => handleVideoPress(item)}>
           <Image source={{ uri: item.thumbnail }} style={styles.thumbnail} />
           {item.duration ? <View style={styles.durationBadge}><Text style={styles.durationText}>{item.duration}</Text></View> : null}
         </TouchableOpacity>
         <View style={styles.videoInfo}>
-          <TouchableOpacity activeOpacity={0.8} onPress={() => navigation.navigate('Channel', { channelData: item })}><Image source={{ uri: item.avatar }} style={styles.channelAvatar} /></TouchableOpacity>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => handleChannelPress(item)}><Image source={{ uri: item.avatar }} style={styles.channelAvatar} /></TouchableOpacity>
           <View style={styles.textContainer}>
-            <TouchableOpacity activeOpacity={0.9} onPress={() => navigation.navigate('Player', { videoId: item.id, videoData: item })}><Text style={styles.title} numberOfLines={2}>{item.title}</Text></TouchableOpacity>
-            <TouchableOpacity activeOpacity={0.8} onPress={() => navigation.navigate('Channel', { channelData: item })}><Text style={styles.meta}>{item.channel} • {item.views} {item.publishedTime ? `• ${item.publishedTime}` : ''}</Text></TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.9} onPress={() => handleVideoPress(item)}><Text style={styles.title} numberOfLines={2}>{item.title}</Text></TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.8} onPress={() => handleChannelPress(item)}><Text style={styles.meta}>{item.channel} • {item.views} {item.publishedTime ? `• ${item.publishedTime}` : ''}</Text></TouchableOpacity>
           </View>
           <TouchableOpacity style={[styles.nativeSubBtn, isSubscribed && styles.nativeSubbedBtn]} onPress={() => toggleSubscription(item.channel, item.avatar)}><Text style={[styles.nativeSubText, isSubscribed && styles.nativeSubbedText]}>{isSubscribed ? 'Subscribed' : 'Subscribe'}</Text></TouchableOpacity>
         </View>
@@ -155,23 +164,45 @@ export default function HomeScreen({ route }) {
     );
   };
 
+  const MeMenuItem = ({ icon, text, onPress }) => (
+    <TouchableOpacity style={styles.meMenuItem} onPress={onPress}>
+      <Ionicons name={icon} size={24} color="#00BFA5" style={styles.meMenuIcon} />
+      <Text style={styles.meMenuText}>{text}</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="#0F0F0F" barStyle="light-content" translucent={true} />
       {activeTab !== 'Shorts' && activeTab !== 'ME' && activeTab !== 'Settings' && (
         <View style={styles.header}>
           <View style={styles.logoContainer}><Ionicons name="logo-youtube" size={28} color="#FF0000" /><Text style={styles.logoText}>MyTube</Text></View>
-          <TouchableOpacity style={styles.searchBar} activeOpacity={0.8} onPress={() => navigation.navigate('Search')}><Text style={{ flex: 1, color: '#888', fontSize: 14 }}>{searchQuery || "সার্চ..."}</Text><Ionicons name="search" size={18} color="#AAA" /></TouchableOpacity>
+          
+          {/* সার্চ বাটনের বাগ ഫিক্স করা হয়েছে */}
+          <TouchableOpacity style={styles.searchBar} activeOpacity={0.8} onPress={() => navigation.navigate('Search')}>
+            <Text style={{ flex: 1, color: '#888', fontSize: 14 }}>{searchQuery || "সার্চ..."}</Text>
+            <Ionicons name="search" size={18} color="#AAA" />
+          </TouchableOpacity>
         </View>
       )}
 
       <View style={styles.mainContent}>
         {activeTab === 'Home' ? ( loading && videos.length === 0 ? ( <ActivityIndicator size="large" color="#FF0000" style={{ flex: 1, justifyContent: 'center' }} /> ) : (
-            <FlatList data={videos} renderItem={renderVideoItem} keyExtractor={(item, index) => item.id + index.toString()} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#FF0000" />} onEndReached={loadMoreVideos} onEndReachedThreshold={0.5} ListFooterComponent={isFetchingMore ? <ActivityIndicator size="small" color="#FF0000" style={{ marginVertical: 20 }} /> : null} contentContainerStyle={{ paddingBottom: 70 }} />
+            <FlatList data={videos} renderItem={renderVideoItem} keyExtractor={(item, index) => item.id + index.toString()} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#FF0000" />} onEndReached={loadMoreVideos} onEndReachedThreshold={0.5} ListFooterComponent={isFetchingMore ? <ActivityIndicator size="small" color="#FF0000" style={{ marginVertical: 20 }} /> : null} />
           )
         ) : activeTab === 'Shorts' ? ( <ShortsScreen initialVideoId={selectedShortId} />
         ) : activeTab === 'Settings' ? ( <SettingsScreen />
-        ) : activeTab === 'ME' ? ( <View style={styles.meContainer}><View style={styles.meHeaderProfile}><Ionicons name="person-circle" size={80} color="#555" /><Text style={styles.meName}>MyTube User</Text></View></View> ) : null}
+        ) : activeTab === 'ME' ? ( 
+          <View style={styles.meContainer}>
+             <View style={styles.meHeaderProfile}><Ionicons name="person-circle" size={80} color="#555" /><Text style={styles.meName}>MyTube User</Text></View>
+             <View style={styles.meMenuWrapper}>
+                 <MeMenuItem icon="time-outline" text="HISTORY" onPress={() => navigation.navigate('History')} />
+                 <MeMenuItem icon="download-outline" text="DOWNLOAD" onPress={() => {}} />
+                 <MeMenuItem icon="notifications-outline" text="MY SUBSCRIBE" onPress={() => navigation.navigate('Subscriptions')} />
+                 <MeMenuItem icon="settings-outline" text="SETTINGS" onPress={() => setActiveTab('Settings')} />
+             </View>
+          </View> 
+        ) : null}
       </View>
 
       <View style={styles.tabBar}>
@@ -216,5 +247,9 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 10, color: '#888', marginTop: 4 },
   meContainer: { flex: 1, backgroundColor: '#0F0F0F' },
   meHeaderProfile: { alignItems: 'center', marginTop: 40, marginBottom: 30 },
-  meName: { color: '#FFF', fontSize: 20, fontWeight: 'bold', marginTop: 10 }
+  meName: { color: '#FFF', fontSize: 20, fontWeight: 'bold', marginTop: 10 },
+  meMenuWrapper: { paddingHorizontal: 20 },
+  meMenuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: '#222' },
+  meMenuIcon: { marginRight: 20 },
+  meMenuText: { color: '#FFF', fontSize: 16, fontWeight: '500' }
 });
