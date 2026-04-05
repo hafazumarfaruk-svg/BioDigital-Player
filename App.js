@@ -14,7 +14,7 @@ import SubscriptionsScreen from './screens/SubscriptionsScreen';
 import SearchSettingScreen from './Settings/searchsetting'; 
 
 // গ্লোবাল ভিডিও প্লেয়ার (Zero-Loading System) ইমপোর্ট করা হলো
-import GlobalVideoPlayer from './GlobalVideoPlayer'; // ফাইলটির সঠিক লোকেশন/পাথ অনুযায়ী ফোল্ডার মিলিয়ে নেবেন
+import GlobalVideoPlayer from './Settings/GlobalVideoPlayer'; // ফাইলটির সঠিক লোকেশন/পাথ অনুযায়ী ফোল্ডার মিলিয়ে নেবেন
 
 const Stack = createStackNavigator();
 
