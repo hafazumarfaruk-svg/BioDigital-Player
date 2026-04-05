@@ -6,6 +6,7 @@ import HomeScreen from './Screens/HomeScreen';
 import PlayerScreen from './Screens/PlayerScreen';
 import ChannelScreen from './Screens/ChannelScreen';
 import PlaylistScreen from './Screens/PlaylistPage';
+import DownloadScreen from './Settings/DownloadScreen';
 import ShortsScreen from './Screens/ShortsScreen';
 import HistoryPage from './Settings/HistoryPage'; 
 import SubscriptionsScreen from './Screens/SubscriptionsScreen'; 
