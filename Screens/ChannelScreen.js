@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Image, TouchableOpacity, FlatList, SafeAreaView
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useIsFocused } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DeviceEventEmitter } from 'react-native'; // গ্লোবাল প্লেয়ারের জিরো-লোডিংয়ের জন্য যুক্ত করা হলো
+import { DeviceEventEmitter } from 'react-native'; 
 
 const { width } = Dimensions.get('window');
 const DESKTOP_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -20,6 +20,8 @@ export default function ChannelScreen() {
   const [activeTab, setActiveTab] = useState('Videos');
   const [loading, setLoading] = useState(true);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isLiveChannel, setIsLiveChannel] = useState(false); 
+  const [liveVideoData, setLiveVideoData] = useState(null); // নির্দিষ্ট লাইভ ভিডিওর ডেটা সংরক্ষণের জন্য
   const [thumbQuality, setThumbQuality] = useState('High');
   const [channelBanner, setChannelBanner] = useState('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1000&auto=format&fit=crop');
   const [subscriberCount, setSubscriberCount] = useState('N/A');
@@ -51,6 +53,8 @@ export default function ChannelScreen() {
       const publishedTime = vid.publishedTimeText?.simpleText || ''; 
       const title = vid.title?.runs?.[0]?.text || vid.title?.simpleText || 'No Title';
       const views = vid.shortViewCountText?.simpleText || vid.viewCountText?.simpleText || '';
+      // ভিডিওটি লাইভ কিনা তা চেক করে স্ট্যাটাস সেভ করা হচ্ছে
+      const isLive = JSON.stringify(vid).includes('"BADGE_STYLE_TYPE_LIVE_NOW"');
 
       return {
         id: String(vid.videoId),
@@ -60,7 +64,8 @@ export default function ChannelScreen() {
         duration: String(duration),
         thumbnail: thumbQuality === 'Data Saver' ? `https://i.ytimg.com/vi/${vid.videoId}/mqdefault.jpg` : `https://i.ytimg.com/vi/${vid.videoId}/hqdefault.jpg`,
         channel: channelName,
-        avatar: channelAvatar
+        avatar: channelAvatar,
+        isLive: isLive
       };
     };
 
@@ -70,8 +75,7 @@ export default function ChannelScreen() {
       if ((node.videoRenderer && node.videoRenderer.videoId) || (node.gridVideoRenderer && node.gridVideoRenderer.videoId)) {
         const target = node.videoRenderer || node.gridVideoRenderer;
         const parsedVid = parseVid(target);
-        if (parsedVid.duration.length > 0 && parsedVid.duration.length <= 5) categorizedData.Shorts.push(parsedVid);
-        else categorizedData.Videos.push(parsedVid);
+        categorizedData.Videos.push(parsedVid);
       } else if (node.reelItemRenderer && node.reelItemRenderer.videoId) {
         const title = node.reelItemRenderer.headline?.simpleText || node.reelItemRenderer.title?.simpleText || 'Short Video';
         const views = node.reelItemRenderer.viewCountText?.simpleText || 'N/A';
@@ -99,10 +103,10 @@ export default function ChannelScreen() {
       let searchMatch = searchHtml.match(/ytInitialData\s*=\s*({.+?});/) || searchHtml.match(/var ytInitialData = (.*?);<\/script>/);
 
       let targetUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(channelName)}`;
+      let channelUrl = null;
+
       if (searchMatch && searchMatch[1]) {
         const searchData = JSON.parse(searchMatch[1]);
-        let channelUrl = null;
-
         const findChannelUrl = (node) => {
           if (channelUrl) return;
           if (node?.channelRenderer) {
@@ -116,17 +120,58 @@ export default function ChannelScreen() {
           }
         };
         findChannelUrl(searchData);
-        if (channelUrl) targetUrl = `https://www.youtube.com${channelUrl}/videos`;
       }
 
-      const channelResponse = await fetch(targetUrl, { headers: { 'User-Agent': DESKTOP_AGENT } });
-      const channelHtml = await channelResponse.text();
-      let channelMatch = channelHtml.match(/ytInitialData\s*=\s*({.+?});/) || channelHtml.match(/var ytInitialData = (.*?);<\/script>/);
+      let targetVideosUrl = targetUrl;
+      let targetShortsUrl = targetUrl;
+
+      if (channelUrl) {
+        targetVideosUrl = `https://www.youtube.com${channelUrl}/videos`;
+        targetShortsUrl = `https://www.youtube.com${channelUrl}/shorts`;
+      }
+
+      const [videosRes, shortsRes] = await Promise.all([
+        fetch(targetVideosUrl, { headers: { 'User-Agent': DESKTOP_AGENT } }),
+        fetch(targetShortsUrl, { headers: { 'User-Agent': DESKTOP_AGENT } })
+      ]);
+
+      const videosHtml = await videosRes.text();
+      const shortsHtml = await shortsRes.text();
+
+      let videosMatch = videosHtml.match(/ytInitialData\s*=\s*({.+?});/) || videosHtml.match(/var ytInitialData = (.*?);<\/script>/);
+      let shortsMatch = shortsHtml.match(/ytInitialData\s*=\s*({.+?});/) || shortsHtml.match(/var ytInitialData = (.*?);<\/script>/);
 
       const categorizedData = { Videos: [], Shorts: [] };
-      if (channelMatch && channelMatch[1]) {
-        const parsedData = JSON.parse(channelMatch[1]);
-        const header = parsedData?.header?.c4TabbedHeaderRenderer || parsedData?.header?.pageHeaderRenderer;
+
+      const processMatch = (match) => {
+        if (match && match[1]) {
+          const parsedData = JSON.parse(match[1]);
+          extractChannelDataRecursively(parsedData, categorizedData);
+          return parsedData;
+        }
+        return null;
+      };
+
+      const parsedVideosData = processMatch(videosMatch);
+      processMatch(shortsMatch);
+
+      categorizedData.Videos = categorizedData.Videos.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+      categorizedData.Shorts = categorizedData.Shorts.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+
+      // নির্দিষ্ট লাইভ ভিডিওটি খুঁজে বের করা হচ্ছে
+      const currentLiveVideo = categorizedData.Videos.find(v => v.isLive);
+      if (currentLiveVideo) {
+         setIsLiveChannel(true);
+         setLiveVideoData(currentLiveVideo);
+      } else {
+         setIsLiveChannel(false);
+         setLiveVideoData(null);
+      }
+
+      setTabData(categorizedData);
+
+      if (parsedVideosData) {
+        const header = parsedVideosData?.header?.c4TabbedHeaderRenderer || parsedVideosData?.header?.pageHeaderRenderer;
         
         let bannerSrc = null;
         if (header?.banner?.thumbnails) {
@@ -145,10 +190,8 @@ export default function ChannelScreen() {
                      header?.content?.pageHeaderViewModel?.metadata?.metadataRows?.[0]?.metadataParts?.[0]?.text?.content ||
                      header?.content?.pageHeaderViewModel?.metadata?.metadataRows?.[1]?.metadataParts?.[0]?.text?.content;
         if (subs) setSubscriberCount(subs);
-
-        extractChannelDataRecursively(parsedData, categorizedData);
       }
-      setTabData(categorizedData);
+
     } catch (error) {
       console.error(error);
     } finally { 
@@ -172,7 +215,6 @@ export default function ChannelScreen() {
     } catch(e) {}
   };
 
-  // ১০০% জিরো লোডিং গ্লোবাল প্লেয়ারের জন্য ইভেন্ট এমিটার ফায়ার করা হচ্ছে
   const handleVideoPress = (item) => {
     DeviceEventEmitter.emit('playVideo', { videoId: item.id, videoData: item });
     navigation.navigate('Player', { videoId: item.id, videoData: item });
@@ -194,7 +236,6 @@ export default function ChannelScreen() {
       );
     }
     
-    // ভিডিও কার্ড পুনরায় অরিজিনাল ডিজাইনে (বড় থাম্বনেইল) করা হলো
     return (
       <View style={styles.videoCard}>
         <TouchableOpacity style={styles.thumbnailContainer} activeOpacity={0.8} onPress={() => handleVideoPress(item)}>
@@ -230,7 +271,25 @@ export default function ChannelScreen() {
     <View>
       <Image source={{ uri: channelBanner }} style={styles.bannerImage} />
       <View style={styles.channelProfileSection}>
-        <Image source={{ uri: channelAvatar }} style={styles.channelLogoLarge} />
+        {/* লোগো এবং লাইভ ব্যাজের অংশ (ক্লিকেবল) */}
+        <TouchableOpacity 
+          style={styles.avatarWrapper} 
+          activeOpacity={isLiveChannel ? 0.7 : 1} 
+          onPress={() => {
+            if (isLiveChannel && liveVideoData) {
+              DeviceEventEmitter.emit('playVideo', { videoId: liveVideoData.id, videoData: liveVideoData });
+              navigation.navigate('Player', { videoId: liveVideoData.id, videoData: liveVideoData });
+            }
+          }}
+        >
+           <Image source={{ uri: channelAvatar }} style={styles.channelLogoLarge} />
+           {isLiveChannel && (
+             <View style={styles.liveBadge}>
+               <Text style={styles.liveBadgeText}>LIVE</Text>
+             </View>
+           )}
+        </TouchableOpacity>
+        
         <View style={styles.channelTextInfo}>
           <Text style={styles.channelTitle}>{channelName}</Text>
           <Text style={styles.channelMeta}>@{(channelName).replace(/\s+/g, '').toLowerCase()} • {subscriberCount}</Text>
@@ -283,7 +342,7 @@ export default function ChannelScreen() {
         ListHeaderComponent={ChannelHeader}
         ListEmptyComponent={renderEmptyComponent} 
         showsVerticalScrollIndicator={false} 
-        contentContainerStyle={{ paddingBottom: 80 }} // ভাসমান প্লেয়ারের জন্য নিচে জায়গা রাখা হয়েছে
+        contentContainerStyle={{ paddingBottom: 80 }} 
       />
     </SafeAreaView>
   );
@@ -296,7 +355,12 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, color: '#FFF', fontSize: 18, fontWeight: 'bold', marginLeft: 5 },
   bannerImage: { width: width, height: width * 0.25, resizeMode: 'cover', backgroundColor: '#222' },
   channelProfileSection: { flexDirection: 'row', padding: 15, alignItems: 'center' },
-  channelLogoLarge: { width: 70, height: 70, borderRadius: 35, marginRight: 15, backgroundColor: '#333' },
+  
+  avatarWrapper: { position: 'relative', marginRight: 15 },
+  channelLogoLarge: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#333' },
+  liveBadge: { position: 'absolute', bottom: -5, alignSelf: 'center', backgroundColor: '#FF0000', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 2, borderColor: '#0F0F0F' },
+  liveBadgeText: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
+  
   channelTextInfo: { flex: 1 },
   channelTitle: { fontSize: 20, fontWeight: 'bold', color: '#FFF' },
   channelMeta: { fontSize: 12, color: '#AAA', marginTop: 2, marginBottom: 8 },
@@ -311,7 +375,6 @@ const styles = StyleSheet.create({
   tabText: { color: '#AAA', fontSize: 15, fontWeight: '500' },
   activeTabText: { color: '#FFF', fontWeight: 'bold' },
   
-  // ডিজাইনের ত্রুটি সংশোধন (পুনরায় বড় ফুল-স্ক্রিন থাম্বনেইল)
   videoCard: { marginBottom: 20 },
   thumbnailContainer: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#111', position: 'relative' },
   thumbnailImage: { width: '100%', height: '100%', resizeMode: 'cover' },
