@@ -4,7 +4,7 @@ import { Video } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
-import * as FileSystem from 'expo-file-system'; // রিয়েল-টাইম ডাউনলোডের জন্য যুক্ত করা হলো
+import * as FileSystem from 'expo-file-system'; 
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
@@ -23,13 +23,17 @@ export default function PlayerScreen({ route, navigation }) {
   const [downloadLinks, setDownloadLinks] = useState([]);
   const [downloadType, setDownloadType] = useState('');
   
-  // লাইভ প্রোগ্রেস ট্র্যাকিং স্টেট
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
   useEffect(() => {
     checkSubscriptionStatus();
     fetchRelatedVideos(false);
+
+    // [FIX]: স্ক্রিন ওপেন হওয়ার সাথে সাথেই গ্লোবাল প্লেয়ারকে ভিডিও প্লে করার সিগন্যাল পাঠানো হচ্ছে
+    if (videoId && videoData) {
+        DeviceEventEmitter.emit('playVideo', { videoId: videoId, videoData: videoData });
+    }
   }, [videoId]);
 
   useEffect(() => {
@@ -67,33 +71,28 @@ export default function PlayerScreen({ route, navigation }) {
     } catch (e) {}
   };
 
-  // রিয়েল-টাইম ডাউনলোড এক্সিকিউশন অ্যালগরিদম
   const handleDownloadExecute = async (item) => {
     try {
       setShowDownloadModal(false);
       setIsDownloading(true);
       setDownloadProgress(0);
 
-      // ফাইলের নাম ও লোকাল লোকেশন তৈরি
       const safeTitle = (videoData.title || 'video').replace(/[^a-zA-Z0-9]/g, '_');
       const fileExt = downloadType === 'audio' ? 'mp3' : 'mp4';
       const fileUri = `${FileSystem.documentDirectory}${safeTitle}_${item.quality}.${fileExt}`;
 
-      // ডাউনলোড প্রসেস ইনিশিয়ালাইজ
       const downloadResumable = FileSystem.createDownloadResumable(
         item.url,
         fileUri,
         {},
         (downloadInfo) => {
           const progress = downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite;
-          setDownloadProgress(progress); // রিয়েল-টাইম ডেটা আপডেট
+          setDownloadProgress(progress); 
         }
       );
 
-      // ডাউনলোড শুরু এবং অপেক্ষা
       const { uri } = await downloadResumable.downloadAsync();
 
-      // ডাউনলোড শেষ হলে মেটাডেটা সেভ করা
       const existingDownloads = await AsyncStorage.getItem('recorded_downloads');
       let downloadList = existingDownloads ? JSON.parse(existingDownloads) : [];
       
@@ -104,7 +103,7 @@ export default function PlayerScreen({ route, navigation }) {
         thumbnail: videoData.thumbnail,
         quality: item.quality,
         type: downloadType,
-        url: uri, // এখন এটি লোকাল অফলাইন লিংক
+        url: uri, 
         date: new Date().toLocaleDateString()
       };
 
@@ -223,7 +222,6 @@ export default function PlayerScreen({ route, navigation }) {
 
       <View style={styles.playerWrapper}></View>
 
-      {/* ইন-অ্যাপ লাইভ প্রোগ্রেস ইন্ডিকেটর */}
       {isDownloading && (
         <View style={styles.progressContainer}>
            <Text style={styles.progressText}>ডাউনলোড হচ্ছে... {Math.round(downloadProgress * 100)}%</Text>
@@ -238,7 +236,14 @@ export default function PlayerScreen({ route, navigation }) {
         data={relatedVideos} 
         keyExtractor={(item, index) => item.id + index.toString()} 
         renderItem={({item}) => (
-          <TouchableOpacity style={styles.recCard} onPress={() => navigation.push('Player', { videoId: item.id, videoData: item })}>
+          <TouchableOpacity 
+             style={styles.recCard} 
+             onPress={() => {
+                // [FIX]: রিলেটেড ভিডিওতে চাপ দিলেও যেন গ্লোবাল প্লেয়ার আপডেট হয়
+                DeviceEventEmitter.emit('playVideo', { videoId: item.id, videoData: item });
+                navigation.push('Player', { videoId: item.id, videoData: item });
+             }}
+          >
             <Image source={{ uri: item.thumbnail }} style={styles.recThumb} />
             <View style={styles.recInfo}>
               <Text style={styles.recTitle} numberOfLines={2}>{item.title}</Text>
@@ -299,7 +304,6 @@ const styles = StyleSheet.create({
     headerIconBtn: { padding: 10 },
     playerWrapper: { width: '100%', height: PLAYER_HEIGHT, backgroundColor: 'transparent' },
     
-    // প্রোগ্রেস বারের স্টাইল
     progressContainer: { backgroundColor: '#1E1E1E', padding: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
     progressText: { color: '#00BFA5', fontSize: 14, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' },
     progressBarBg: { height: 6, backgroundColor: '#333', borderRadius: 3, overflow: 'hidden' },
