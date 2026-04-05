@@ -1,22 +1,94 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Animated, PanResponder } from 'react-native';
 import { Video } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { DeviceEventEmitter } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16;
+
+// মিনি প্লেয়ারের ডাইমেনশন (স্ক্রিনশট অনুযায়ী 16:9 অ্যাসপেক্ট রেশিও)
+const MINI_WIDTH = width * 0.45; 
+const MINI_HEIGHT = (MINI_WIDTH * 9) / 16;
+
 const MY_API_SERVER = "http://127.0.0.1:10000";
+
+global.appSettings = global.appSettings || {};
+
+const getNumericQuality = (q) => {
+    if (!q) return '720';
+    if (q.includes('Auto') || q.includes('Normal')) return '720';
+    if (q.includes('75p') || q.includes('Anti') || q.includes('Low')) return '144'; 
+    if (q.includes('144p')) return '144';
+    if (q.includes('240p')) return '240';
+    if (q.includes('360p')) return '360';
+    if (q.includes('480p')) return '480';
+    if (q.includes('720p')) return '720';
+    if (q.includes('1080p')) return '1080';
+    if (q.includes('1440p') || q.includes('2K')) return '1440';
+    if (q.includes('2160p') || q.includes('4K') || q.toLowerCase().includes('4k')) return '2160';
+    if (q.includes('4320p') || q.includes('8K') || q.toLowerCase().includes('8k')) return '4320';
+    return '720'; 
+};
 
 export default function GlobalPlayer() {
   const navigation = useNavigation();
   const videoRef = useRef(null);
   
-  const [playerState, setPlayerState] = useState('hidden'); // 'hidden', 'full', 'mini'
+  const [playerState, setPlayerState] = useState('hidden'); 
   const [videoData, setVideoData] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
   const [isPlaying, setIsPlaying] = useState(true);
+
+  // ভাসমান অ্যানিমেশন এবং কোঅর্ডিনেট ট্র্যাক করার জন্য Animated Value
+  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+
+  // ড্র্যাগ (Drag) বা সরানোর লজিক
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // শুধুমাত্র ৩ পিক্সেলের বেশি নড়লে এটিকে 'ড্র্যাগ' হিসেবে ধরবে (ক্লিকের সাথে কনফ্লিক্ট এড়াতে)
+        return Math.abs(gestureState.dx) > 3 || Math.abs(gestureState.dy) > 3;
+      },
+      onPanResponderGrant: () => {
+        pan.setOffset({
+          x: pan.x._value,
+          y: pan.y._value
+        });
+        pan.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: Animated.event(
+        [null, { dx: pan.x, dy: pan.y }],
+        { useNativeDriver: false }
+      ),
+      onPanResponderRelease: () => {
+        pan.flattenOffset();
+        
+        // স্ক্রিনের বাইরে যেন চলে না যায়, তার জন্য গাণিতিক বাউন্ডিং বক্স (Bounding Box)
+        let newX = pan.x._value;
+        let newY = pan.y._value;
+
+        const maxRight = 10;
+        const maxLeft = -(width - MINI_WIDTH - 20);
+        const maxDown = 20;
+        const maxUp = -(height - MINI_HEIGHT - 120);
+
+        if (newX > maxRight) newX = maxRight;
+        if (newX < maxLeft) newX = maxLeft;
+        if (newY > maxDown) newY = maxDown;
+        if (newY < maxUp) newY = maxUp;
+
+        // স্ক্রিনের বাইরে গেলে স্প্রিং অ্যানিমেশনের মাধ্যমে ভেতরে ফেরত আসবে
+        Animated.spring(pan, {
+          toValue: { x: newX, y: newY },
+          friction: 6,
+          useNativeDriver: false
+        }).start();
+      }
+    })
+  ).current;
 
   useEffect(() => {
     const playSubscription = DeviceEventEmitter.addListener('playVideo', async (data) => {
@@ -30,9 +102,16 @@ export default function GlobalPlayer() {
       setStreamUrl(null);
       setIsPlaying(true);
 
+      // মিনি প্লেয়ারের পজিশন রিসেট করা
+      pan.setValue({ x: 0, y: 0 });
+
       try {
+        const qualityStr = global.appSettings?.normalVideo || '720p';
+        const numericQuality = getNumericQuality(qualityStr);
+        
         const targetUrl = `https://www.youtube.com/watch?v=${data.videoId}`;
-        const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(targetUrl)}&quality=720&t=${Date.now()}`;
+        const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(targetUrl)}&quality=${numericQuality}&t=${Date.now()}`;
+        
         const res = await fetch(apiUrl);
         const json = await res.json();
         if (json.success && json.url) setStreamUrl(json.url);
@@ -68,86 +147,118 @@ export default function GlobalPlayer() {
      setPlayerState('hidden');
      setVideoData(null);
      setStreamUrl(null);
+     pan.setValue({ x: 0, y: 0 }); // মেমোরি ক্লিয়ার
   };
 
-  const isFull = playerState === 'full';
+  const expandToFull = () => {
+     if (videoData) {
+        setPlayerState('full');
+        navigation.navigate('Player', { videoId: videoData.id, videoData: videoData });
+     }
+  };
 
+  if (playerState === 'full') {
+     return (
+       <View style={styles.fullContainer} pointerEvents="box-none">
+          <View style={styles.fullVideoWrapper}>
+             {streamUrl ? (
+                <Video 
+                   ref={videoRef} 
+                   source={{ uri: streamUrl }} 
+                   style={styles.video} 
+                   shouldPlay={isPlaying} 
+                   useNativeControls={true} 
+                   resizeMode="contain" 
+                />
+             ) : (
+                <View style={styles.loadingBox} />
+             )}
+          </View>
+       </View>
+     );
+  }
+
+  // মিনি/ভাসমান (PiP) মোড
   return (
-     <View style={isFull ? styles.fullContainer : styles.miniContainer} pointerEvents="box-none">
-        <TouchableOpacity
-          activeOpacity={isFull ? 1 : 0.9}
-          onPress={() => {
-             if (!isFull && videoData) {
-                setPlayerState('full');
-                navigation.navigate('Player', { videoId: videoData.id, videoData: videoData });
-             }
-          }}
-          style={isFull ? styles.fullTouchable : styles.miniTouchable}
-        >
-           {/* ইউটিউবের অফিশিয়াল অ্যাসপেক্ট রেশিও এবং ডাইমেনশন অনুযায়ী ভিডিও র‍্যাপার */}
-           <View style={isFull ? styles.fullVideoWrapper : styles.miniVideoWrapper}>
+     <Animated.View 
+        style={[
+          styles.miniContainer, 
+          { transform: [{ translateX: pan.x }, { translateY: pan.y }] }
+        ]}
+        {...panResponder.panHandlers}
+     >
+        <TouchableOpacity activeOpacity={0.9} style={styles.miniTouchable} onPress={expandToFull}>
+           <View style={styles.miniVideoWrapper}>
                {streamUrl ? (
                   <Video 
                      ref={videoRef} 
                      source={{ uri: streamUrl }} 
                      style={styles.video} 
                      shouldPlay={isPlaying} 
-                     useNativeControls={isFull} 
-                     resizeMode={isFull ? "contain" : "cover"} 
+                     useNativeControls={false} 
+                     resizeMode="cover" 
                   />
                ) : (
                   <View style={styles.loadingBox} />
                )}
+               
+               {/* স্ক্রিনশটের হুবহু লেআউট: ভিডিওর উপরের বাটন ওভারলে */}
+               <View style={styles.overlay}>
+                  <TouchableOpacity style={styles.miniPlayBtn} onPress={togglePlay}>
+                     <Ionicons name={isPlaying ? "pause" : "play"} size={26} color="#FFF" />
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity style={styles.miniCloseBtn} onPress={closePlayer}>
+                     <Ionicons name="close" size={24} color="#FFF" />
+                  </TouchableOpacity>
+               </View>
            </View>
-
-           {/* মিনি প্লেয়ারের টেক্সট ও বাটন (ইউটিউবের এক্স্যাক্ট এলাইনমেন্ট) */}
-           {!isFull && (
-              <View style={styles.miniControlsRow}>
-                <View style={styles.miniTextWrapper}>
-                   <Text style={styles.miniTitle} numberOfLines={1}>{videoData?.title}</Text>
-                   <Text style={styles.miniChannel} numberOfLines={1}>{videoData?.channel}</Text>
-                </View>
-                <View style={styles.miniActionButtons}>
-                   <TouchableOpacity onPress={togglePlay} style={styles.miniBtn}>
-                      <Ionicons name={isPlaying ? "pause" : "play"} size={24} color="#FFF" />
-                   </TouchableOpacity>
-                   <TouchableOpacity onPress={closePlayer} style={styles.miniBtn}>
-                      <Ionicons name="close" size={26} color="#FFF" />
-                   </TouchableOpacity>
-                </View>
-              </View>
-           )}
         </TouchableOpacity>
-        
-        {/* ইউটিউবের মতো নিচে একটি চিকন রেড প্রগ্রেস বার (Visual representation) */}
-        {!isFull && <View style={styles.miniProgressBar} />}
-     </View>
+     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   fullContainer: { position: 'absolute', top: 55, left: 0, width: width, height: PLAYER_HEIGHT, zIndex: 9999, backgroundColor: '#000' },
-  // মিনি প্লেয়ারের ইউটিউব স্ট্যান্ডার্ড ডাইমেনশন
-  miniContainer: { position: 'absolute', bottom: 60, left: 0, width: '100%', height: 56, backgroundColor: '#212121', zIndex: 9999, elevation: 10 },
-  
-  fullTouchable: { flex: 1, width: '100%', height: '100%' },
-  miniTouchable: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-
   fullVideoWrapper: { flex: 1, backgroundColor: '#000', width: '100%', height: '100%' },
-  // উচ্চতা 56 হলে 16:9 অনুপাতে প্রস্থ হবে প্রায় 100
-  miniVideoWrapper: { width: 100, height: 56, backgroundColor: '#000' },
-
+  
+  // ভাসমান (Draggable) মিনি প্লেয়ারের স্টাইল
+  miniContainer: { 
+    position: 'absolute', 
+    bottom: 80, // বটম বারের উপরে থাকার জন্য
+    right: 15,  // ডান দিকে থাকার জন্য
+    width: MINI_WIDTH, 
+    height: MINI_HEIGHT, 
+    backgroundColor: '#000', 
+    zIndex: 9999, 
+    elevation: 15,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+  },
+  
+  miniTouchable: { flex: 1, width: '100%', height: '100%' },
+  miniVideoWrapper: { flex: 1, width: '100%', height: '100%', backgroundColor: '#111', position: 'relative' },
+  
   video: { width: '100%', height: '100%' },
   loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' },
-  
-  miniControlsRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  miniTextWrapper: { flex: 1, paddingHorizontal: 12, justifyContent: 'center' },
-  miniTitle: { color: '#FFF', fontSize: 13, fontWeight: '500', marginBottom: 2 },
-  miniChannel: { color: '#AAA', fontSize: 12 },
-  
-  miniActionButtons: { flexDirection: 'row', alignItems: 'center', paddingRight: 8 },
-  miniBtn: { paddingHorizontal: 10, paddingVertical: 8 },
-  
-  // ইউটিউবের সিগনেচার বটম রেড লাইন
-  miniProgressBar: { position: 'absolute', bottom: 0, left: 0, width: '100%', height: 1.5, backgroundColor: 'rgba(255, 255, 255, 0.2)' }
+
+  // ভিডিওর উপরের ওভারলে (স্ক্রিনশট অনুযায়ী)
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)', // হালকা ডার্ক টিন্ট যেন আইকনগুলো স্পষ্ট বোঝা যায়
+  },
+  miniPlayBtn: {
+    position: 'absolute',
+    top: '50%',
+    left: 10,
+    marginTop: -13, // আইকনের উচ্চতার অর্ধেক
+  },
+  miniCloseBtn: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    padding: 2,
+  }
 });
