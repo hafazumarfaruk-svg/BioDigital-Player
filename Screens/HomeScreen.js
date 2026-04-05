@@ -4,7 +4,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import * as NavigationBar from 'expo-navigation-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DeviceEventEmitter } from 'react-native';
 
 import SettingsScreen from '../Settings/SettingsScreen';
 import ShortsScreen from './ShortsScreen'; 
@@ -20,7 +19,7 @@ export default function HomeScreen({ route }) {
   const isFocused = useIsFocused();
 
   const [activeTab, setActiveTab] = useState('Home'); 
-  const [activeFeedTab, setActiveFeedTab] = useState('Video'); // Video or Live
+  const [activeFeedTab, setActiveFeedTab] = useState('Video'); 
   
   const [videos, setVideos] = useState([]);
   const [liveVideos, setLiveVideos] = useState([]);
@@ -85,7 +84,6 @@ export default function HomeScreen({ route }) {
       if (match && match[1]) {
         const jsonData = JSON.parse(match[1]);
         const extractedVideos = []; 
-        const extractedShorts = [];
         const extractedLiveChannels = [];
 
         const extractNodes = (node) => {
@@ -125,8 +123,6 @@ export default function HomeScreen({ route }) {
                         avatar: ch.thumbnail?.thumbnails?.[0]?.url,
                     });
                 }
-            } else if (node.reelItemRenderer) {
-                extractedShorts.push(node.reelItemRenderer);
             }
             Object.values(node).forEach(extractNodes);
           }
@@ -146,7 +142,7 @@ export default function HomeScreen({ route }) {
   };
 
   const handleVideoPress = (item) => {
-    DeviceEventEmitter.emit('playVideo', { videoId: item.id, videoData: item });
+    // গ্লোবাল ইভেন্ট মুছে দিয়ে সরাসরি ন্যাভিগেট করা হচ্ছে
     navigation.navigate('Player', { videoId: item.id, videoData: item });
   };
 
@@ -187,7 +183,7 @@ export default function HomeScreen({ route }) {
             onSubmitEditing={() => fetchContent(liveChannelQuery, true)} 
             returnKeyType="search"
           />
-          <TouchableOpacity onPress={() => fetchContent(liveChannelQuery, true)} style={{padding: 5}}>
+          <TouchableOpacity onPress={() => fetchContent(liveChannelQuery, true)}>
             <Ionicons name="search" size={20} color="#AAA" />
           </TouchableOpacity>
         </View>
@@ -207,7 +203,7 @@ export default function HomeScreen({ route }) {
               <Text style={styles.liveChanName} numberOfLines={1}>{item.name}</Text>
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={{color: '#888', fontStyle: 'italic', marginTop: 10}}>কোনো চ্যানেল পাওয়া যায়নি...</Text>}
+          ListEmptyComponent={<Text style={{color: '#888', fontStyle: 'italic'}}>কোনো চ্যানেল পাওয়া যায়নি...</Text>}
         />
       </View>
     );
@@ -219,38 +215,22 @@ export default function HomeScreen({ route }) {
       
       {activeTab === 'Home' && (
         <View style={styles.topSection}>
-          {/* হেডার এবং সার্চ বার */}
           <View style={styles.header}>
-            <View style={styles.logoContainer}>
-              <Ionicons name="logo-youtube" size={28} color="#FF0000" />
-              <Text style={styles.logoText}>MyTube</Text>
-            </View>
+            <View style={styles.logoContainer}><Ionicons name="logo-youtube" size={28} color="#FF0000" /><Text style={styles.logoText}>MyTube</Text></View>
             
-            {/* সার্চ বারে নেভিগেশন নিশ্চিত করা হলো */}
-            <TouchableOpacity 
-               style={styles.searchBar} 
-               activeOpacity={0.8} 
-               onPress={() => navigation.navigate('Search')}
-               hitSlop={{top: 10, bottom: 10, left: 10, right: 10}} // টাচ এরিয়া বাড়ানো হলো
-            >
+            {/* সার্চ বারে ক্লিক করলে Search পেজে যাবে */}
+            <TouchableOpacity style={styles.searchBar} activeOpacity={0.8} onPress={() => navigation.navigate('Search')}>
               <Text style={{ flex: 1, color: '#888', fontSize: 14 }}>{searchQuery || "সার্চ..."}</Text>
               <Ionicons name="search" size={18} color="#AAA" />
             </TouchableOpacity>
           </View>
 
-          {/* ভিডিও এবং লাইভ টগল বাটন (দৃশ্যমানতা নিশ্চিত করা হলো) */}
+          {/* ভিডিও এবং লাইভ অপশন (দৃশ্যমান করা হয়েছে) */}
           <View style={styles.toggleRow}>
-            <TouchableOpacity 
-               style={[styles.toggleBtn, activeFeedTab === 'Video' && styles.activeToggle]} 
-               onPress={() => setActiveFeedTab('Video')}
-            >
+            <TouchableOpacity style={[styles.toggleBtn, activeFeedTab === 'Video' && styles.activeToggle]} onPress={() => setActiveFeedTab('Video')}>
               <Text style={[styles.toggleText, activeFeedTab === 'Video' && styles.activeToggleText]}>ভিডিও</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity 
-               style={[styles.toggleBtn, activeFeedTab === 'Live' && styles.activeToggle]} 
-               onPress={() => setActiveFeedTab('Live')}
-            >
+            <TouchableOpacity style={[styles.toggleBtn, activeFeedTab === 'Live' && styles.activeToggle]} onPress={() => setActiveFeedTab('Live')}>
               <Text style={[styles.toggleText, activeFeedTab === 'Live' && styles.activeToggleText]}>লাইভ</Text>
             </TouchableOpacity>
           </View>
@@ -294,15 +274,12 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10 },
   logoContainer: { flexDirection: 'row', alignItems: 'center', width: 105 },
   logoText: { color: '#FFF', fontSize: 16, fontWeight: 'bold', marginLeft: 4 },
+  searchBar: { flex: 1, flexDirection: 'row', backgroundColor: '#222', borderRadius: 20, marginHorizontal: 8, paddingHorizontal: 12, alignItems: 'center', height: 38 },
   
-  // সার্চ বারের স্টাইল
-  searchBar: { flex: 1, flexDirection: 'row', backgroundColor: '#222', borderRadius: 20, marginHorizontal: 8, paddingHorizontal: 15, alignItems: 'center', height: 40, zIndex: 10 },
-  
-  // টগল বাটনের স্টাইল
-  toggleRow: { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 10 },
-  toggleBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, marginRight: 12, backgroundColor: '#222' },
+  toggleRow: { flexDirection: 'row', paddingHorizontal: 12, paddingBottom: 10 },
+  toggleBtn: { paddingHorizontal: 20, paddingVertical: 6, borderRadius: 15, marginRight: 10, backgroundColor: '#222' },
   activeToggle: { backgroundColor: '#FFF' },
-  toggleText: { color: '#AAA', fontSize: 14, fontWeight: 'bold' },
+  toggleText: { color: '#AAA', fontSize: 13, fontWeight: 'bold' },
   activeToggleText: { color: '#000' },
 
   mainContent: { flex: 1, backgroundColor: '#0F0F0F' },
@@ -318,15 +295,15 @@ const styles = StyleSheet.create({
   title: { color: '#FFF', fontSize: 14, fontWeight: '500' },
   meta: { color: '#AAA', fontSize: 12, marginTop: 4 },
 
-  liveHeaderContainer: { padding: 15, borderBottomWidth: 6, borderBottomColor: '#222', backgroundColor: '#111' },
-  liveSearchBox: { flexDirection: 'row', backgroundColor: '#222', borderRadius: 10, paddingHorizontal: 12, alignItems: 'center', height: 45, marginBottom: 15 },
+  liveHeaderContainer: { padding: 12, borderBottomWidth: 4, borderBottomColor: '#222' },
+  liveSearchBox: { flexDirection: 'row', backgroundColor: '#222', borderRadius: 10, paddingHorizontal: 12, alignItems: 'center', height: 40, marginBottom: 15 },
   liveInput: { flex: 1, color: '#FFF', fontSize: 14 },
-  sectionTitle: { color: '#FFF', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
+  sectionTitle: { color: '#FFF', fontSize: 15, fontWeight: 'bold', marginBottom: 12 },
   liveChanItem: { width: 80, alignItems: 'center', marginRight: 15 },
   liveAvatarWrapper: { position: 'relative' },
-  liveAvatar: { width: 64, height: 64, borderRadius: 32, borderWidth: 2, borderColor: '#FF0000' },
-  miniLiveBadge: { position: 'absolute', bottom: 0, right: 0, width: 16, height: 16, borderRadius: 8, backgroundColor: '#FF0000', borderWidth: 2, borderColor: '#111' },
-  liveChanName: { color: '#AAA', fontSize: 11, marginTop: 8, textAlign: 'center' },
+  liveAvatar: { width: 60, height: 60, borderRadius: 30, borderWidth: 2, borderColor: '#FF0000' },
+  miniLiveBadge: { position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderRadius: 7, backgroundColor: '#FF0000', borderWidth: 2, borderColor: '#0F0F0F' },
+  liveChanName: { color: '#AAA', fontSize: 11, marginTop: 6, textAlign: 'center' },
 
   tabBar: { flexDirection: 'row', height: 60, backgroundColor: '#0F0F0F', borderTopWidth: 1, borderTopColor: '#222' },
   tab: { flex: 1, justifyContent: 'center', alignItems: 'center' },
