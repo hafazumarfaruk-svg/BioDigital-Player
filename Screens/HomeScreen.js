@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import * as NavigationBar from 'expo-navigation-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 
 import SettingsScreen from '../Settings/SettingsScreen';
 import ShortsScreen from './ShortsScreen'; 
@@ -28,6 +29,7 @@ export default function HomeScreen({ route }) {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedShortId, setSelectedShortId] = useState(null);
   const [subscribedChannels, setSubscribedChannels] = useState([]);
@@ -84,6 +86,7 @@ export default function HomeScreen({ route }) {
       if (match && match[1]) {
         const jsonData = JSON.parse(match[1]);
         const extractedVideos = []; 
+        const extractedShorts = [];
         const extractedLiveChannels = [];
 
         const extractNodes = (node) => {
@@ -106,6 +109,7 @@ export default function HomeScreen({ route }) {
                 if (activeFeedTab === 'Live') {
                     if (isLive) {
                         extractedVideos.push(data);
+                        // লাইভ ভিডিওর ভেতর থেকেই সরাসরি চ্যানেল এক্সট্রাক্ট করা হচ্ছে
                         extractedLiveChannels.push({
                             id: vid.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || data.channel, 
                             name: data.channel, 
@@ -123,6 +127,8 @@ export default function HomeScreen({ route }) {
                         avatar: ch.thumbnail?.thumbnails?.[0]?.url,
                     });
                 }
+            } else if (node.reelItemRenderer) {
+                extractedShorts.push(node.reelItemRenderer);
             }
             Object.values(node).forEach(extractNodes);
           }
@@ -131,6 +137,8 @@ export default function HomeScreen({ route }) {
 
         if (activeFeedTab === 'Live') {
             setLiveVideos(isNewSearch ? extractedVideos : [...liveVideos, ...extractedVideos]);
+            
+            // নতুন এবং পুরাতন চ্যানেল মিলিয়ে ডুপ্লিকেট রিমুভ করা হচ্ছে
             const allChannels = isNewSearch ? extractedLiveChannels : [...liveChannels, ...extractedLiveChannels];
             const uniqueChannels = Array.from(new Map(allChannels.map(item => [item.name, item])).values());
             setLiveChannels(uniqueChannels);
@@ -142,7 +150,7 @@ export default function HomeScreen({ route }) {
   };
 
   const handleVideoPress = (item) => {
-    // গ্লোবাল ইভেন্ট মুছে দিয়ে সরাসরি ন্যাভিগেট করা হচ্ছে
+    DeviceEventEmitter.emit('playVideo', { videoId: item.id, videoData: item });
     navigation.navigate('Player', { videoId: item.id, videoData: item });
   };
 
@@ -169,6 +177,7 @@ export default function HomeScreen({ route }) {
   );
 
   const LiveHeader = () => {
+    // রিয়েল-টাইম লোকাল ফিল্টারিং (টাইপ করার সাথে সাথে কাজ করবে)
     const filteredChannels = liveChannels.filter(ch => ch.name?.toLowerCase().includes(liveChannelQuery.toLowerCase()));
 
     return (
@@ -180,7 +189,7 @@ export default function HomeScreen({ route }) {
             placeholderTextColor="#888"
             value={liveChannelQuery}
             onChangeText={setLiveChannelQuery}
-            onSubmitEditing={() => fetchContent(liveChannelQuery, true)} 
+            onSubmitEditing={() => fetchContent(liveChannelQuery, true)} // এন্টার চাপলে গ্লোবাল সার্চ হবে
             returnKeyType="search"
           />
           <TouchableOpacity onPress={() => fetchContent(liveChannelQuery, true)}>
@@ -217,15 +226,12 @@ export default function HomeScreen({ route }) {
         <View style={styles.topSection}>
           <View style={styles.header}>
             <View style={styles.logoContainer}><Ionicons name="logo-youtube" size={28} color="#FF0000" /><Text style={styles.logoText}>MyTube</Text></View>
-            
-            {/* সার্চ বারে ক্লিক করলে Search পেজে যাবে */}
             <TouchableOpacity style={styles.searchBar} activeOpacity={0.8} onPress={() => navigation.navigate('Search')}>
               <Text style={{ flex: 1, color: '#888', fontSize: 14 }}>{searchQuery || "সার্চ..."}</Text>
               <Ionicons name="search" size={18} color="#AAA" />
             </TouchableOpacity>
           </View>
 
-          {/* ভিডিও এবং লাইভ অপশন (দৃশ্যমান করা হয়েছে) */}
           <View style={styles.toggleRow}>
             <TouchableOpacity style={[styles.toggleBtn, activeFeedTab === 'Video' && styles.activeToggle]} onPress={() => setActiveFeedTab('Video')}>
               <Text style={[styles.toggleText, activeFeedTab === 'Video' && styles.activeToggleText]}>ভিডিও</Text>
