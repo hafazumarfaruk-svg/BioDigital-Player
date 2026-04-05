@@ -12,7 +12,7 @@ import SubscriptionsScreen from './screens/SubscriptionsScreen';
 import SearchSettingScreen from './Settings/searchsetting'; 
 
 // নতুন গ্লোবাল প্লেয়ার ইমপোর্ট করা হলো
-import GlobalPlayer from './Settings/GlobalPlayer'; 
+import GlobalVideoPlayer from './Settings/GlobalVideoPlayer'; 
 
 const Stack = createStackNavigator();
 
