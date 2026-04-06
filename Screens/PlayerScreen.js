@@ -4,9 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-
-// [FIX]: কোর API এর বদলে Legacy API ইমপোর্ট করা হলো লগের নির্দেশনানুযায়ী
 import * as FileSystem from 'expo-file-system/legacy'; 
+
+// [FIX]: পাবলিক মেমোরিতে সেভ করার জন্য মিডিয়া লাইব্রেরি ইমপোর্ট করা হলো
+import * as MediaLibrary from 'expo-media-library';
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
@@ -88,18 +89,25 @@ export default function PlayerScreen({ route, navigation }) {
       );
 
       const { uri } = await downloadResumable.downloadAsync();
+      
+      // [FIX]: মিডিয়া লাইব্রেরির মাধ্যমে ফোনের আসল গ্যালারি/ভিডিও ফোল্ডারে সেভ করা
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status === 'granted') {
+          await MediaLibrary.createAssetAsync(uri);
+      }
+
       const existingDownloads = await AsyncStorage.getItem('recorded_downloads');
       let downloadList = existingDownloads ? JSON.parse(existingDownloads) : [];
       
-      downloadList.unshift({ id: Date.now().toString(), videoId, title: videoData.title, thumbnail: videoData.thumbnail, quality: item.quality, type: downloadType, url: uri, date: new Date().toLocaleDateString() });
+      // localUri নামে লোকাল পাথ সেভ করা হলো যাতে গ্লোবাল প্লেয়ার বুঝতে পারে
+      downloadList.unshift({ id: Date.now().toString(), videoId, title: videoData.title, thumbnail: videoData.thumbnail, quality: item.quality, type: downloadType, localUri: uri, date: new Date().toLocaleDateString() });
       await AsyncStorage.setItem('recorded_downloads', JSON.stringify(downloadList));
 
       setIsDownloading(false);
-      Alert.alert("সফল", "ডাউনলোড মেমোরিতে সেভ হয়েছে!");
+      Alert.alert("সফল", "ডাউনলোড সফল এবং গ্যালারিতে সেভ হয়েছে!");
     } catch (error) {
       setIsDownloading(false);
       Alert.alert("ত্রুটি", "নেটওয়ার্ক সমস্যার কারণে ডাউনলোড ব্যর্থ হয়েছে।");
-      console.error("Download Error:", error);
     }
   };
 
@@ -266,18 +274,15 @@ const styles = StyleSheet.create({
     appHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, height: 50 },
     headerIconBtn: { padding: 10 },
     playerWrapper: { width: '100%', height: PLAYER_HEIGHT, backgroundColor: 'transparent' },
-    
     progressContainer: { backgroundColor: '#1E1E1E', padding: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
     progressText: { color: '#00BFA5', fontSize: 14, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' },
     progressBarBg: { height: 6, backgroundColor: '#333', borderRadius: 3, overflow: 'hidden' },
     progressBarFill: { height: '100%', backgroundColor: '#00BFA5' },
-
     detailsContainer: { padding: 12 },
     titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
     titleTextContainer: { flex: 1, paddingRight: 15 },
     mainTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
     downloadIconBtn: { padding: 8, backgroundColor: '#272727', borderRadius: 20 },
-    
     metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5, marginBottom: 15 },
     mainViews: { color: '#AAA', fontSize: 12 },
     moreText: { color: '#FFF', fontSize: 12, fontWeight: 'bold', marginLeft: 8 },
