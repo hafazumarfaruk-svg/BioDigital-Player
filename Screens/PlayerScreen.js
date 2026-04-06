@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, ActivityIndicator, TouchableOpacity, FlatList, Image, Dimensions, StatusBar, SafeAreaView, ScrollView, BackHandler, Modal, Alert } from 'react-native';
-import { Video } from 'expo-av';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, Text, ActivityIndicator, TouchableOpacity, FlatList, Image, Dimensions, StatusBar, SafeAreaView, ScrollView, Modal, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
 import * as FileSystem from 'expo-file-system'; 
+import { useFocusEffect } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
@@ -26,29 +26,23 @@ export default function PlayerScreen({ route, navigation }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
+  // [FIX]: স্ক্রিন ফোকাস হলে ম্যাক্সিমাইজ এবং ব্লার হলে মিনিমাইজ হবে মিলি-সেকেন্ডে
+  useFocusEffect(
+    useCallback(() => {
+      DeviceEventEmitter.emit('maximizeVideo');
+      return () => {
+        DeviceEventEmitter.emit('minimizeVideo');
+      };
+    }, [])
+  );
+
   useEffect(() => {
     checkSubscriptionStatus();
     fetchRelatedVideos(false);
-
-    // [FIX]: স্ক্রিন ওপেন হওয়ার সাথে সাথেই গ্লোবাল প্লেয়ারকে ভিডিও প্লে করার সিগন্যাল পাঠানো হচ্ছে
     if (videoId && videoData) {
         DeviceEventEmitter.emit('playVideo', { videoId: videoId, videoData: videoData });
     }
   }, [videoId]);
-
-  useEffect(() => {
-    const backAction = () => {
-      if (isDownloading) {
-          Alert.alert("ডাউনলোড চলছে", "ডাউনলোড চলাকালীন সময়ে ভিডিও বন্ধ করা যাবে না।");
-          return true;
-      }
-      DeviceEventEmitter.emit('minimizeVideo');
-      navigation.goBack();
-      return true; 
-    };
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
-    return () => backHandler.remove(); 
-  }, [isDownloading]);
 
   const checkSubscriptionStatus = async () => {
     try {
@@ -82,39 +76,22 @@ export default function PlayerScreen({ route, navigation }) {
       const fileUri = `${FileSystem.documentDirectory}${safeTitle}_${item.quality}.${fileExt}`;
 
       const downloadResumable = FileSystem.createDownloadResumable(
-        item.url,
-        fileUri,
-        {},
-        (downloadInfo) => {
-          const progress = downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite;
-          setDownloadProgress(progress); 
-        }
+        item.url, fileUri, {},
+        (downloadInfo) => { setDownloadProgress(downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite); }
       );
 
       const { uri } = await downloadResumable.downloadAsync();
-
       const existingDownloads = await AsyncStorage.getItem('recorded_downloads');
       let downloadList = existingDownloads ? JSON.parse(existingDownloads) : [];
       
-      const newDownload = {
-        id: Date.now().toString(),
-        videoId: videoId,
-        title: videoData.title,
-        thumbnail: videoData.thumbnail,
-        quality: item.quality,
-        type: downloadType,
-        url: uri, 
-        date: new Date().toLocaleDateString()
-      };
-
-      downloadList.unshift(newDownload);
+      downloadList.unshift({ id: Date.now().toString(), videoId, title: videoData.title, thumbnail: videoData.thumbnail, quality: item.quality, type: downloadType, url: uri, date: new Date().toLocaleDateString() });
       await AsyncStorage.setItem('recorded_downloads', JSON.stringify(downloadList));
 
       setIsDownloading(false);
-      Alert.alert("সফল", "ডাউনলোড সফলভাবে সম্পন্ন হয়েছে এবং মেমোরিতে সেভ হয়েছে!");
+      Alert.alert("সফল", "ডাউনলোড মেমোরিতে সেভ হয়েছে!");
     } catch (error) {
       setIsDownloading(false);
-      Alert.alert("ত্রুটি", "সার্ভার বা নেটওয়ার্ক সমস্যার কারণে ডাউনলোড ব্যর্থ হয়েছে।");
+      Alert.alert("ত্রুটি", "নেটওয়ার্ক সমস্যার কারণে ডাউনলোড ব্যর্থ হয়েছে।");
     }
   };
 
@@ -135,11 +112,11 @@ export default function PlayerScreen({ route, navigation }) {
         setDownloadLinks(data.links);
         setDownloadStep('list');
       } else {
-        alert("লিংক পাওয়া যায়নি।");
+        Alert.alert("ত্রুটি", "কোনো লিংক পাওয়া যায়নি।");
         setShowDownloadModal(false);
       }
     } catch (error) {
-      alert("সার্ভার এরর।");
+      Alert.alert("সার্ভার এরর", "আপনার Termux সার্ভারটি সচল আছে কিনা যাচাই করুন।");
       setShowDownloadModal(false);
     }
   };
@@ -147,10 +124,9 @@ export default function PlayerScreen({ route, navigation }) {
   const fetchRelatedVideos = async (isLoadMore = false) => {
     if (isLoadMore) setIsLoadingMore(true);
     try {
-      let query = videoData.channel || "trending bangla";
-      const response = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
-      const htmlText = await response.text();
-      const match = htmlText.match(/var ytInitialData = (.*?);<\/script>/);
+      const response = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(videoData.channel || "trending bangla")}`);
+      const text = await response.text();
+      const match = text.match(/var ytInitialData = (.*?);<\/script>/);
       if (!match) return;
       const jsonData = JSON.parse(match[1]);
       const extractedVids = [];
@@ -158,12 +134,11 @@ export default function PlayerScreen({ route, navigation }) {
         if (Array.isArray(node)) node.forEach(extractNodes);
         else if (node && typeof node === 'object') {
           if (node.videoRenderer && node.videoRenderer.videoId !== videoId) {
-            const vid = node.videoRenderer;
             extractedVids.push({ 
-              id: vid.videoId, title: vid.title?.runs?.[0]?.text, 
-              channel: vid.ownerText?.runs?.[0]?.text, views: vid.viewCountText?.simpleText, 
-              thumbnail: `https://i.ytimg.com/vi/${vid.videoId}/hqdefault.jpg`,
-              avatar: vid.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url
+              id: node.videoRenderer.videoId, title: node.videoRenderer.title?.runs?.[0]?.text, 
+              channel: node.videoRenderer.ownerText?.runs?.[0]?.text, views: node.videoRenderer.viewCountText?.simpleText, 
+              thumbnail: `https://i.ytimg.com/vi/${node.videoRenderer.videoId}/hqdefault.jpg`,
+              avatar: node.videoRenderer.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url
             });
           } else Object.values(node).forEach(extractNodes);
         }
@@ -175,19 +150,19 @@ export default function PlayerScreen({ route, navigation }) {
 
   const renderHeader = () => (
     <View style={styles.detailsContainer}>
-      <TouchableOpacity activeOpacity={0.8} onPress={() => setIsExpandedDesc(!isExpandedDesc)} style={styles.titleSection}>
-         <Text style={styles.mainTitle} numberOfLines={isExpandedDesc ? null : 2}>{videoData?.title}</Text>
-         <View style={styles.metaRow}>
-            <Text style={styles.mainViews}>{videoData?.views} {videoData?.publishedTime ? `• ${videoData.publishedTime}` : ''}</Text>
-            <Text style={styles.moreText}>...more</Text>
-         </View>
-      </TouchableOpacity>
-      
-      <View style={styles.actionRow}>
-        <TouchableOpacity style={styles.downloadEntryBtn} onPress={() => { setShowDownloadModal(true); setDownloadStep('selection'); }}>
-           <Ionicons name="download-outline" size={18} color="#FFF" />
-           <Text style={styles.downloadEntryText}>Download</Text>
-        </TouchableOpacity>
+      <View style={styles.titleRow}>
+         {/* [FIX]: ডাউনলোড বাটন ডান সাইডে এবং শুধুমাত্র আইকন */}
+         <TouchableOpacity activeOpacity={0.8} onPress={() => setIsExpandedDesc(!isExpandedDesc)} style={styles.titleTextContainer}>
+            <Text style={styles.mainTitle} numberOfLines={isExpandedDesc ? null : 2}>{videoData?.title}</Text>
+         </TouchableOpacity>
+         <TouchableOpacity style={styles.downloadIconBtn} onPress={() => { setShowDownloadModal(true); setDownloadStep('selection'); }}>
+            <Ionicons name="download-outline" size={24} color="#FFF" />
+         </TouchableOpacity>
+      </View>
+
+      <View style={styles.metaRow}>
+         <Text style={styles.mainViews}>{videoData?.views} {videoData?.publishedTime ? `• ${videoData.publishedTime}` : ''}</Text>
+         <Text style={styles.moreText}>...more</Text>
       </View>
 
       <View style={styles.channelRow}>
@@ -225,9 +200,7 @@ export default function PlayerScreen({ route, navigation }) {
       {isDownloading && (
         <View style={styles.progressContainer}>
            <Text style={styles.progressText}>ডাউনলোড হচ্ছে... {Math.round(downloadProgress * 100)}%</Text>
-           <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${downloadProgress * 100}%` }]} />
-           </View>
+           <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: `${downloadProgress * 100}%` }]} /></View>
         </View>
       )}
 
@@ -236,14 +209,7 @@ export default function PlayerScreen({ route, navigation }) {
         data={relatedVideos} 
         keyExtractor={(item, index) => item.id + index.toString()} 
         renderItem={({item}) => (
-          <TouchableOpacity 
-             style={styles.recCard} 
-             onPress={() => {
-                // [FIX]: রিলেটেড ভিডিওতে চাপ দিলেও যেন গ্লোবাল প্লেয়ার আপডেট হয়
-                DeviceEventEmitter.emit('playVideo', { videoId: item.id, videoData: item });
-                navigation.push('Player', { videoId: item.id, videoData: item });
-             }}
-          >
+          <TouchableOpacity style={styles.recCard} onPress={() => navigation.push('Player', { videoId: item.id, videoData: item })}>
             <Image source={{ uri: item.thumbnail }} style={styles.recThumb} />
             <View style={styles.recInfo}>
               <Text style={styles.recTitle} numberOfLines={2}>{item.title}</Text>
@@ -263,24 +229,13 @@ export default function PlayerScreen({ route, navigation }) {
               <Text style={styles.modalTitle}>ডাউনলোড অপশন</Text>
               <TouchableOpacity onPress={() => setShowDownloadModal(false)}><Ionicons name="close" size={26} color="#FFF" /></TouchableOpacity>
             </View>
-
             {downloadStep === 'selection' && (
               <View style={styles.selectionRow}>
-                <TouchableOpacity style={styles.selectBtn} onPress={() => handleDownloadInit('video')}>
-                  <Ionicons name="videocam" size={30} color="#FF0000" />
-                  <Text style={styles.selectText}>ভিডিও</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.selectBtn} onPress={() => handleDownloadInit('audio')}>
-                  <Ionicons name="musical-notes" size={30} color="#00BFA5" />
-                  <Text style={styles.selectText}>অডিও</Text>
-                </TouchableOpacity>
+                <TouchableOpacity style={styles.selectBtn} onPress={() => handleDownloadInit('video')}><Ionicons name="videocam" size={30} color="#FF0000" /><Text style={styles.selectText}>ভিডিও</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.selectBtn} onPress={() => handleDownloadInit('audio')}><Ionicons name="musical-notes" size={30} color="#00BFA5" /><Text style={styles.selectText}>অডিও</Text></TouchableOpacity>
               </View>
             )}
-
-            {downloadStep === 'fetching' && (
-              <View style={styles.loadingContainer}><ActivityIndicator size="large" color="#FF0000" /><Text style={styles.loadingText}>লিংক তৈরি হচ্ছে...</Text></View>
-            )}
-
+            {downloadStep === 'fetching' && <View style={styles.loadingContainer}><ActivityIndicator size="large" color="#FF0000" /><Text style={styles.loadingText}>লিংক তৈরি হচ্ছে...</Text></View>}
             {downloadStep === 'list' && (
               <ScrollView style={styles.qualityList}>
                 {downloadLinks.map((item, index) => (
@@ -309,16 +264,17 @@ const styles = StyleSheet.create({
     progressBarBg: { height: 6, backgroundColor: '#333', borderRadius: 3, overflow: 'hidden' },
     progressBarFill: { height: '100%', backgroundColor: '#00BFA5' },
 
-    titleSection: { padding: 12 },
+    detailsContainer: { padding: 12 },
+    titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+    titleTextContainer: { flex: 1, paddingRight: 15 },
     mainTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
-    metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
+    downloadIconBtn: { padding: 8, backgroundColor: '#272727', borderRadius: 20 },
+    
+    metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5, marginBottom: 15 },
     mainViews: { color: '#AAA', fontSize: 12 },
     moreText: { color: '#FFF', fontSize: 12, fontWeight: 'bold', marginLeft: 8 },
-    actionRow: { paddingHorizontal: 12, marginBottom: 15 },
-    downloadEntryBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#272727', alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 15, borderRadius: 20 },
-    downloadEntryText: { color: '#FFF', fontSize: 14, fontWeight: 'bold', marginLeft: 8 },
     divider: { height: 1, backgroundColor: '#222', marginVertical: 10 },
-    channelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12 },
+    channelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     channelLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
     channelAvatar: { width: 40, height: 40, borderRadius: 20, marginRight: 12, backgroundColor: '#333' },
     channelTextCol: { flex: 1 },
