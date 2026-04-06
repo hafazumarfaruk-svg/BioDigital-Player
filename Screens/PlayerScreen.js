@@ -3,8 +3,10 @@ import { View, StyleSheet, Text, ActivityIndicator, TouchableOpacity, FlatList, 
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
-import * as FileSystem from 'expo-file-system'; 
 import { useFocusEffect } from '@react-navigation/native';
+
+// [FIX]: কোর API এর বদলে Legacy API ইমপোর্ট করা হলো লগের নির্দেশনানুযায়ী
+import * as FileSystem from 'expo-file-system/legacy'; 
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
@@ -74,7 +76,6 @@ export default function PlayerScreen({ route, navigation }) {
       const fileExt = downloadType === 'audio' ? 'mp3' : 'mp4';
       const fileUri = `${FileSystem.documentDirectory}${safeTitle}_${item.quality}.${fileExt}`;
 
-      // [FIX]: ইউটিউবের অ্যান্টি-বট সিস্টেম বাইপাস করার জন্য User-Agent হেডার যুক্ত করা হলো
       const downloadResumable = FileSystem.createDownloadResumable(
         item.url, 
         fileUri, 
