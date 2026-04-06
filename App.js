@@ -1,45 +1,35 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
-
-import HomeScreen from './Screens/HomeScreen';
-import PlayerScreen from './Screens/PlayerScreen';
-import ChannelScreen from './Screens/ChannelScreen';
-import PlaylistScreen from './Screens/PlaylistPage';
-import livescreen from './Screens/livescreen';
-import downloadscreen from './Settings/downloadscreen';
-import ShortsScreen from './Screens/ShortsScreen';
-import HistoryPage from './Settings/HistoryPage'; 
-import SubscriptionsScreen from './Screens/SubscriptionsScreen'; 
-import SearchSettingScreen from './Settings/searchsetting'; 
-
-// নতুন গ্লোবাল প্লেয়ার ইমপোর্ট করা হলো
-import GlobalPlayer from './Settings/GlobalPlayer'; 
-
-const Stack = createStackNavigator();
-
-export default function App() {
-  return (
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Home">
-        <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Player" component={PlayerScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Channel" component={ChannelScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Playlist" component={PlaylistScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Shorts" component={ShortsScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="History" component={HistoryPage} options={{ headerShown: false }} />
-        <Stack.Screen name="Subscriptions" component={SubscriptionsScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Search" component={SearchSettingScreen} options={{ headerShown: false }} />
-        
-        {/* [FIX]: মিসিং স্ক্রিনগুলো এখানে স্ট্যাকে রেজিস্টার করা হলো */}
-        <Stack.Screen name="Downloads" component={downloadscreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Live" component={livescreen} options={{ headerShown: false }} />
-
-      </Stack.Navigator>
-
-      {/* এই প্লেয়ারটি সব স্ক্রিনের উপরে ভাসবে এবং কখনো আনমাউন্ট হবে না */}
-      <GlobalPlayer />
-
-    </NavigationContainer>
-  );
+{
+  "license": "0BSD",
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "expo": "~54.0.33",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "immer": "^9.0.6",
+    "expo-av": "~16.0.8",
+    "zustand": "^4.5.2",
+    "@types/react": "19.2.14",
+    "@expo/vector-icons": "^15.0.3",
+    "react-native-paper": "4.9.2",
+    "expo-navigation-bar": "~5.0.10",
+    "react-native-screens": "~4.16.0",
+    "react-native-webview": "13.15.0",
+    "expo-build-properties": "~0.12.5",
+    "@react-navigation/stack": "^6.3.20",
+    "@react-navigation/native": "^6.1.9",
+    "react-native-gesture-handler": "~2.28.0",
+    "react-native-safe-area-context": "~5.6.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo-media-library": "~16.0.5"
+  },
+  "private": true,
+  "name": "BioDigital-Player",
+  "version": "1.0.0"
 }
