@@ -4,6 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import * as FileSystem from 'expo-file-system/legacy'; 
+import * as MediaLibrary from 'expo-media-library';
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
@@ -23,6 +25,7 @@ export default function PlayerScreen({ route, navigation }) {
   const [downloadType, setDownloadType] = useState('');
   
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -62,39 +65,51 @@ export default function PlayerScreen({ route, navigation }) {
     } catch (e) {}
   };
 
-  // [FIX]: VidMate প্রযুক্তি (Aria2) দিয়ে ডাউনলোডের কমান্ড সার্ভারে পাঠানো হচ্ছে
+  // [FIX]: প্রোগ্রেস বার সহ লিগ্যাসি ডাউনলোডার + গ্যালারিতে সেভ করার অপশন
   const handleDownloadExecute = async (item) => {
     try {
       setShowDownloadModal(false);
       setIsDownloading(true);
+      setDownloadProgress(0);
 
-      const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const qText = item.quality.replace('p', '');
+      const safeTitle = (videoData.title || 'video').replace(/[^a-zA-Z0-9]/g, '_');
+      const fileExt = downloadType === 'audio' ? 'mp3' : 'mp4';
+      const fileUri = `${FileSystem.documentDirectory}${safeTitle}_${item.quality.replace(/[^0-9]/g, '')}p.${fileExt}`;
 
-      const apiUrl = `${MY_API_SERVER}/api/aria-download?url=${encodeURIComponent(targetUrl)}&quality=${qText}&type=${downloadType}`;
+      const downloadResumable = FileSystem.createDownloadResumable(
+        item.url, 
+        fileUri, 
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        },
+        (downloadInfo) => { 
+            const progress = downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite;
+            setDownloadProgress(progress); 
+        }
+      );
+
+      const { uri } = await downloadResumable.downloadAsync();
       
-      const response = await fetch(apiUrl);
-      const data = await response.json();
-
-      if(data.success) {
-          const existingDownloads = await AsyncStorage.getItem('recorded_downloads');
-          let downloadList = existingDownloads ? JSON.parse(existingDownloads) : [];
-          
-          downloadList.unshift({ id: Date.now().toString(), videoId, title: videoData.title, thumbnail: videoData.thumbnail, quality: item.quality, type: downloadType, date: new Date().toLocaleDateString() });
-          await AsyncStorage.setItem('recorded_downloads', JSON.stringify(downloadList));
-
-          setIsDownloading(false);
-          Alert.alert(
-              "ডাউনলোড শুরু হয়েছে!", 
-              "ভিডমেট প্রযুক্তিতে (Aria2 Multi-threaded) ভিডিওটি অত্যন্ত দ্রুতগতিতে আপনার ফোনের 'Download' ফোল্ডারে সেভ হচ্ছে। কিছুক্ষণের মধ্যেই গ্যালারিতে দেখতে পাবেন।"
-          );
-      } else {
-         setIsDownloading(false);
-         Alert.alert("ত্রুটি", "সার্ভার কমান্ড গ্রহণ করতে ব্যর্থ হয়েছে।");
+      // গ্যালারিতে সেভ করা হচ্ছে
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status === 'granted') {
+          await MediaLibrary.createAssetAsync(uri);
       }
+
+      const existingDownloads = await AsyncStorage.getItem('recorded_downloads');
+      let downloadList = existingDownloads ? JSON.parse(existingDownloads) : [];
+      
+      downloadList.unshift({ id: Date.now().toString(), videoId, title: videoData.title, thumbnail: videoData.thumbnail, quality: item.quality, type: downloadType, localUri: uri, date: new Date().toLocaleDateString() });
+      await AsyncStorage.setItem('recorded_downloads', JSON.stringify(downloadList));
+
+      setIsDownloading(false);
+      Alert.alert("সফল", "ডাউনলোড সফল এবং গ্যালারিতে সেভ হয়েছে!");
     } catch (error) {
       setIsDownloading(false);
-      Alert.alert("ত্রুটি", "নেটওয়ার্ক সমস্যার কারণে সার্ভারে কমান্ড পাঠানো যায়নি।");
+      Alert.alert("ত্রুটি", "নেটওয়ার্ক সমস্যার কারণে ডাউনলোড ব্যর্থ হয়েছে।");
+      console.error("Download Error:", error);
     }
   };
 
@@ -200,10 +215,11 @@ export default function PlayerScreen({ route, navigation }) {
 
       <View style={styles.playerWrapper}></View>
 
+      {/* [FIX]: ডাউনলোড প্রোগ্রেস বার ফিরিয়ে আনা হলো */}
       {isDownloading && (
         <View style={styles.progressContainer}>
-           <ActivityIndicator size="small" color="#00BFA5" />
-           <Text style={styles.progressText}>সার্ভারে কমান্ড পাঠানো হচ্ছে...</Text>
+           <Text style={styles.progressText}>ডাউনলোড হচ্ছে... {Math.round(downloadProgress * 100)}%</Text>
+           <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: `${downloadProgress * 100}%` }]} /></View>
         </View>
       )}
 
@@ -261,8 +277,10 @@ const styles = StyleSheet.create({
     appHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, height: 50 },
     headerIconBtn: { padding: 10 },
     playerWrapper: { width: '100%', height: PLAYER_HEIGHT, backgroundColor: 'transparent' },
-    progressContainer: { flexDirection: 'row', backgroundColor: '#1E1E1E', padding: 15, borderBottomWidth: 1, borderBottomColor: '#333', alignItems: 'center', justifyContent: 'center' },
-    progressText: { color: '#00BFA5', fontSize: 14, fontWeight: 'bold', marginLeft: 10 },
+    progressContainer: { backgroundColor: '#1E1E1E', padding: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
+    progressText: { color: '#00BFA5', fontSize: 14, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' },
+    progressBarBg: { height: 6, backgroundColor: '#333', borderRadius: 3, overflow: 'hidden' },
+    progressBarFill: { height: '100%', backgroundColor: '#00BFA5' },
     detailsContainer: { padding: 12 },
     titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
     titleTextContainer: { flex: 1, paddingRight: 15 },
@@ -299,4 +317,4 @@ const styles = StyleSheet.create({
     qualityList: { marginBottom: 20 },
     qualityItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
     qualityText: { color: '#FFF', fontSize: 16, fontWeight: '500' }
-})
+});
