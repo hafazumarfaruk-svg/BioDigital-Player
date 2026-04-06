@@ -74,8 +74,15 @@ export default function PlayerScreen({ route, navigation }) {
       const fileExt = downloadType === 'audio' ? 'mp3' : 'mp4';
       const fileUri = `${FileSystem.documentDirectory}${safeTitle}_${item.quality}.${fileExt}`;
 
+      // [FIX]: ইউটিউবের অ্যান্টি-বট সিস্টেম বাইপাস করার জন্য User-Agent হেডার যুক্ত করা হলো
       const downloadResumable = FileSystem.createDownloadResumable(
-        item.url, fileUri, {},
+        item.url, 
+        fileUri, 
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        },
         (downloadInfo) => { setDownloadProgress(downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite); }
       );
 
@@ -91,6 +98,7 @@ export default function PlayerScreen({ route, navigation }) {
     } catch (error) {
       setIsDownloading(false);
       Alert.alert("ত্রুটি", "নেটওয়ার্ক সমস্যার কারণে ডাউনলোড ব্যর্থ হয়েছে।");
+      console.error("Download Error:", error);
     }
   };
 
@@ -100,7 +108,6 @@ export default function PlayerScreen({ route, navigation }) {
     fetchDownloadLinks(type);
   };
 
-  // [FIX]: এপিআই রাউট এবং অবজেক্ট কি-ম্যাপিং আপডেট করা হয়েছে
   const fetchDownloadLinks = async (type) => {
     try {
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -109,7 +116,6 @@ export default function PlayerScreen({ route, navigation }) {
       const response = await fetch(apiUrl);
       const data = await response.json();
 
-      // সার্ভার রেসপন্সের 'availableLinks' এর সাথে সিঙ্ক করা হলো
       if (data.success && data.availableLinks) {
         setDownloadLinks(data.availableLinks);
         setDownloadStep('list');
