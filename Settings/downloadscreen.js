@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, Image, TouchableOpacity, SafeAreaView, StatusBar, Linking, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Image, TouchableOpacity, SafeAreaView, StatusBar, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
@@ -33,7 +33,23 @@ export default function DownloadScreen({ navigation }) {
 
   const renderItem = ({ item }) => (
     <View style={styles.card}>
-      <TouchableOpacity style={styles.cardMain} activeOpacity={0.8} onPress={() => Linking.openURL(item.url)}>
+      {/* [FIX]: Linking.openURL এর পরিবর্তে লোকাল প্লেব্যাক ইঞ্জিন (GlobalPlayer) ব্যবহার করার জন্য নেভিগেশন আপডেট করা হলো */}
+      <TouchableOpacity 
+        style={styles.cardMain} 
+        activeOpacity={0.8} 
+        onPress={() => {
+          navigation.navigate('Player', {
+            videoId: item.videoId,
+            videoData: {
+              id: item.videoId,
+              title: item.title,
+              channel: 'Downloaded File',
+              thumbnail: item.thumbnail,
+              localUri: item.localUri || item.url // গ্লোবাল প্লেয়ারকে সিগন্যাল দেওয়া হচ্ছে এটি লোকাল ফাইল
+            }
+          });
+        }}
+      >
         <Image source={{ uri: item.thumbnail }} style={styles.thumb} />
         <View style={styles.info}>
           <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
@@ -64,7 +80,7 @@ export default function DownloadScreen({ navigation }) {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="download-outline" size={80} color="#333" />
-            <Text style={styles.emptyText}>কোনো ডাউনলোড পাওয়া যায়নি</Text>
+            <Text style={styles.emptyText}>কোনো ডাউনলোড পাওয়া যায়নি</Text>
           </View>
         }
       />
