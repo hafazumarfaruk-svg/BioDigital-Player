@@ -13,7 +13,7 @@ import PlaylistScreen from './Screens/PlaylistPage';
 import ShortsScreen from './Screens/ShortsScreen';
 import HistoryPage from './Settings/HistoryPage'; 
 import SubscriptionsScreen from './screens/SubscriptionsScreen'; 
-import SearchSettingScreen from './Settings/searchsetting'; 
+import SearchSetting from './Settings/searchsetting'; 
 
 // [FIX]: নতুন যুক্ত করা ডাউনলোড স্ক্রিন এবং গ্লোবাল প্লেয়ার ইমপোর্ট করা হলো
 // (বি.দ্র: আপনার ফোল্ডার স্ট্রাকচার অনুযায়ী DownloadScreen এবং GlobalPlayer এর পাথ './screens/' দেওয়া হলো। যদি পাথ ভিন্ন হয়, তবে তা মিলিয়ে নেবেন)
@@ -34,7 +34,7 @@ export default function App() {
           <Stack.Screen name="Shorts" component={ShortsScreen} options={{ headerShown: false }} />
           <Stack.Screen name="History" component={HistoryPage} options={{ headerShown: false }} />
           <Stack.Screen name="Subscriptions" component={SubscriptionsScreen} options={{ headerShown: false }} />
-          <Stack.Screen name="Search" component={SearchSettingScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Search" component={SearchSetting} options={{ headerShown: false }} />
           
           {/* ডাউনলোড স্ক্রিনটি এখানে যুক্ত করা হলো */}
           <Stack.Screen name="Downloads" component={downloadscreen} options={{ headerShown: false }} />
