@@ -46,7 +46,7 @@ export default function App() {
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="History" component={HistoryPage} />
         <Stack.Screen name="Downloads" component={DownloadScreen} />
-        <Stack.Screen name="SearchSettings" component={SearchSetting} />
+        <Stack.Screen name="searchsettings" component={SearchSetting} />
       </Stack.Navigator>
     </NavigationContainer>
   );
