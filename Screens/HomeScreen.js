@@ -26,7 +26,7 @@ export default function HomeScreen({ route }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
-  
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedShortId, setSelectedShortId] = useState(null);
   const [subscribedChannels, setSubscribedChannels] = useState([]);
@@ -99,12 +99,12 @@ export default function HomeScreen({ route }) {
       const response = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`, { headers: { 'User-Agent': DESKTOP_AGENT } });
       const htmlText = await response.text();
       let match = htmlText.match(/ytInitialData\s*=\s*({.+?});/) || htmlText.match(/var ytInitialData = (.*?);<\/script>/);
-      
+
       if (match && match[1]) {
         const jsonData = JSON.parse(match[1]);
         const extractedVideos = [];
         const extractedShorts = [];
-        
+
         const extractNodes = (node) => {
           if (Array.isArray(node)) node.forEach(extractNodes);
           else if (node && typeof node === 'object') {
@@ -122,7 +122,7 @@ export default function HomeScreen({ route }) {
           }
         };
         extractNodes(jsonData);
-        
+
         const freshVideos = extractedVideos.filter(vid => {
             if (global.seenVideoIds.has(vid.videoId)) return false;
             global.seenVideoIds.add(vid.videoId); return true;
@@ -147,7 +147,7 @@ export default function HomeScreen({ route }) {
           <Image source={{ uri: item.thumbnail }} style={styles.thumbnail} />
           {item.duration ? <View style={styles.durationBadge}><Text style={styles.durationText}>{item.duration}</Text></View> : null}
         </TouchableOpacity>
-        
+
         <View style={styles.videoInfo}>
           <Image source={{ uri: item.avatar }} style={styles.channelAvatar} />
           <View style={styles.textContainer}>
@@ -169,14 +169,15 @@ export default function HomeScreen({ route }) {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="#0F0F0F" barStyle="light-content" translucent={true} />
-      
+
       {activeTab !== 'Shorts' && activeTab !== 'ME' && activeTab !== 'Settings' && (
         <View style={styles.header}>
           <View style={styles.logoContainer}>
              <Ionicons name="logo-youtube" size={28} color="#FF0000" />
              <Text style={styles.logoText}>MyTube</Text>
           </View>
-          <TouchableOpacity style={styles.searchBar} activeOpacity={0.8} onPress={() => navigation.navigate('Search')}>
+          {/* [FIXED]: এখানে 'Search' এর পরিবর্তে 'SearchSettings' দেওয়া হয়েছে */}
+          <TouchableOpacity style={styles.searchBar} activeOpacity={0.8} onPress={() => navigation.navigate('SearchSettings')}>
             <Text style={{ flex: 1, color: '#888', fontSize: 14 }}>{searchQuery || "সার্চ..."}</Text>
             <Ionicons name="search" size={18} color="#AAA" />
           </TouchableOpacity>
@@ -227,13 +228,12 @@ export default function HomeScreen({ route }) {
            <Ionicons name={activeTab==='Home'?'home':'home-outline'} size={24} color={activeTab==='Home'?'#FFF':'#888'} />
            <Text style={[styles.tabText, activeTab==='Home' && {color:'#FFF'}]}>Home</Text>
         </TouchableOpacity>
-        
+
         <TouchableOpacity onPress={() => setActiveTab('Shorts')} style={styles.tab}>
            <Ionicons name={activeTab==='Shorts'?'play-circle':'play-circle-outline'} size={24} color={activeTab==='Shorts'?'#FFF':'#888'} />
            <Text style={[styles.tabText, activeTab==='Shorts' && {color:'#FFF'}]}>Shorts</Text>
         </TouchableOpacity>
 
-        {/* [FIX]: লাইভ বাটনে ক্লিক করলে এখন লাইভ স্ক্রিন ওপেন হবে */}
         <TouchableOpacity onPress={() => setActiveTab('Live')} style={styles.tab}>
            <Ionicons name={activeTab==='Live'?'radio':'radio-outline'} size={24} color={activeTab==='Live'?'#FF0000':'#888'} />
            <Text style={[styles.tabText, activeTab==='Live' && {color:'#FF0000'}]}>Live</Text>
