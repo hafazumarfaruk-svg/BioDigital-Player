@@ -18,7 +18,7 @@ import SearchSettingScreen from './Settings/searchsetting';
 // [FIX]: নতুন যুক্ত করা ডাউনলোড স্ক্রিন এবং গ্লোবাল প্লেয়ার ইমপোর্ট করা হলো
 // (বি.দ্র: আপনার ফোল্ডার স্ট্রাকচার অনুযায়ী DownloadScreen এবং GlobalPlayer এর পাথ './screens/' দেওয়া হলো। যদি পাথ ভিন্ন হয়, তবে তা মিলিয়ে নেবেন)
 import downloadscreen from './Settings/downloadscreen';
-import GlobalPlayer from './Screens/GlobalPlayer'; 
+import GlobalPlayer from './Settings/GlobalPlayer'; 
 
 const Stack = createStackNavigator();
 
