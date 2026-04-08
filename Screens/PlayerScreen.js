@@ -4,7 +4,6 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Audio } from 'expo-av'; 
 import * as FileSystem from 'expo-file-system/legacy'; 
 
 const { width, height } = Dimensions.get('window');
@@ -34,19 +33,7 @@ export default function PlayerScreen({ route, navigation }) {
     }, [])
   );
 
-  useEffect(() => {
-    const enableBackgroundAudio = async () => {
-      try {
-        await Audio.setAudioModeAsync({
-          staysActiveInBackground: true,
-          playsInSilentModeIOS: true,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: false,
-        });
-      } catch (e) { console.log(e); }
-    };
-    enableBackgroundAudio();
-  }, []);
+  // [FIX]: এখান থেকে গ্লোবাল ব্যাকগ্রাউন্ড অডিও পারমিশনটি রিমুভ করা হয়েছে
 
   useEffect(() => {
     checkSubscriptionStatus();
@@ -78,12 +65,10 @@ export default function PlayerScreen({ route, navigation }) {
     } catch (e) {}
   };
 
-  // [FIX]: গ্লোবাল প্লেয়ারকে অডিও মোডের সিগন্যাল পাঠানো
   const handleBackgroundPlay = () => {
     const newMode = !isAudioMode;
     setIsAudioMode(newMode);
     
-    // গ্লোবাল প্লেয়ারকে সিগন্যাল দিচ্ছে
     DeviceEventEmitter.emit('toggleAudioMode', newMode);
     
     if (newMode) {
@@ -220,7 +205,6 @@ export default function PlayerScreen({ route, navigation }) {
          </TouchableOpacity>
          
          <View style={styles.actionRow}>
-            {/* ডাইনামিক অডিও টগল বাটন */}
             <TouchableOpacity style={[styles.actionIconBtn, isAudioMode ? {backgroundColor: '#00BFA5'} : {}]} onPress={handleBackgroundPlay}>
                <Ionicons name="headset-outline" size={24} color={isAudioMode ? "#000" : "#00BFA5"} />
             </TouchableOpacity>
