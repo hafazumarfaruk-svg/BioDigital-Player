@@ -6,16 +6,6 @@ import { DeviceEventEmitter } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system'; 
 import * as MediaLibrary from 'expo-media-library';
-import * as Notifications from 'expo-notifications';
-
-// সিস্টেম নোটিফিকেশনের ডিফল্ট আচরণ কনফিগার করা হলো
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16; 
@@ -75,33 +65,18 @@ export default function PlayerScreen({ route, navigation }) {
     } catch (e) {}
   };
 
-  // [UPDATED FIX]: লাইভ নোটিফিকেশন সহ নতুন স্ট্যান্ডার্ড ডাউনলোড সিস্টেম
+  // [UPDATED FIX]: নোটিফিকেশন রিমুভ করে গ্লোবাল ইভেন্ট এমিটার (Event Emitter) যুক্ত করা হয়েছে
   const handleDownloadExecute = async (item) => {
     try {
       setShowDownloadModal(false);
       setIsDownloading(true);
       setDownloadProgress(0);
 
+      const downloadId = Date.now().toString(); // ইউনিক আইডি
       const safeTitle = (videoData.title || 'video').replace(/[^a-zA-Z0-9]/g, '_');
       const fileExt = downloadType === 'audio' ? 'mp3' : 'mp4';
-      const filename = `${safeTitle}_${item.quality.replace(/[^0-9]/g, '')}p.${fileExt}`;
-      const fileUri = `${FileSystem.documentDirectory}${filename}`;
+      const fileUri = `${FileSystem.documentDirectory}${safeTitle}_${item.quality.replace(/[^0-9]/g, '')}p.${fileExt}`;
 
-      // ১. প্রারম্ভিক নোটিফিকেশন তৈরি
-      let notificationId = null;
-      try {
-        notificationId = await Notifications.scheduleNotificationAsync({
-          content: {
-            title: `ডাউনলোড শুরু হচ্ছে...`,
-            body: filename,
-          },
-          trigger: null,
-        });
-      } catch (e) {
-        console.error("Notification init error:", e);
-      }
-
-      // ২. ফাইল সিস্টেম ডাউনলোড এবং লাইভ নোটিফিকেশন আপডেট
       const downloadResumable = FileSystem.createDownloadResumable(
         item.url, 
         fileUri, 
@@ -110,55 +85,41 @@ export default function PlayerScreen({ route, navigation }) {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
         },
-        async (downloadInfo) => { 
+        (downloadInfo) => { 
             const progress = downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite;
+            const percentage = Math.round(progress * 100);
             setDownloadProgress(progress); 
             
-            const percentage = Math.round(progress * 100);
-            
-            // নোটিফিকেশন ওভারলোড এড়াতে প্রতি ১০% পরপর আপডেট
-            if (notificationId && percentage % 10 === 0) {
-                await Notifications.scheduleNotificationAsync({
-                  identifier: notificationId,
-                  content: {
-                    title: `ডাউনলোড হচ্ছে... ${percentage}%`,
-                    body: filename,
-                  },
-                  trigger: null,
-                });
-            }
+            // ডাউনলোড স্ক্রিনে লাইভ ডেটা পাঠানোর সিগন্যাল
+            DeviceEventEmitter.emit('live_download_progress', {
+                id: downloadId,
+                title: videoData.title,
+                thumbnail: videoData.thumbnail,
+                quality: item.quality,
+                type: downloadType,
+                progress: percentage
+            });
         }
       );
 
       const { uri } = await downloadResumable.downloadAsync();
 
-      // ৩. সফল ডাউনলোডের চূড়ান্ত নোটিফিকেশন
-      if (notificationId) {
-        await Notifications.scheduleNotificationAsync({
-          identifier: notificationId,
-          content: {
-            title: 'ডাউনলোড সম্পন্ন হয়েছে',
-            body: `${filename} ডিভাইসে সেভ করা হয়েছে।`,
-          },
-          trigger: null,
-        });
-      }
-
-      // ৪. গ্যালারিতে সেভ করা হচ্ছে
+      // গ্যালারিতে সেভ করা হচ্ছে
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status === 'granted') {
           await MediaLibrary.createAssetAsync(uri);
       }
 
-      // ৫. লোকাল স্টোরেজে ডেটা সংরক্ষণ
       const existingDownloads = await AsyncStorage.getItem('recorded_downloads');
       let downloadList = existingDownloads ? JSON.parse(existingDownloads) : [];
 
-      downloadList.unshift({ id: Date.now().toString(), videoId, title: videoData.title, thumbnail: videoData.thumbnail, quality: item.quality, type: downloadType, localUri: uri, date: new Date().toLocaleDateString() });
+      downloadList.unshift({ id: downloadId, videoId, title: videoData.title, thumbnail: videoData.thumbnail, quality: item.quality, type: downloadType, localUri: uri, date: new Date().toLocaleDateString() });
       await AsyncStorage.setItem('recorded_downloads', JSON.stringify(downloadList));
 
       setIsDownloading(false);
-      Alert.alert("সফল", "ডাউনলোড সফল এবং গ্যালারিতে সেভ হয়েছে!");
+      // ডাউনলোড শেষ হওয়ার সিগন্যাল
+      DeviceEventEmitter.emit('live_download_complete', { id: downloadId });
+      Alert.alert("সফল", "ডাউনলোড সফল এবং সেভ হয়েছে!");
     } catch (error) {
       setIsDownloading(false);
       Alert.alert("ত্রুটি", "নেটওয়ার্ক সমস্যার কারণে ডাউনলোড ব্যর্থ হয়েছে।");
@@ -188,7 +149,7 @@ export default function PlayerScreen({ route, navigation }) {
         setShowDownloadModal(false);
       }
     } catch (error) {
-      Alert.alert("সার্ভার এরর", "আপনার সার্ভারটি সচল আছে কিনা যাচাই করুন।");
+      Alert.alert("সার্ভার এরর", "আপনার Termux সার্ভারটি সচল আছে কিনা যাচাই করুন।");
       setShowDownloadModal(false);
     }
   };
@@ -268,7 +229,6 @@ export default function PlayerScreen({ route, navigation }) {
 
       <View style={styles.playerWrapper}></View>
 
-      {/* অ্যাপের ভেতরের প্রোগ্রেস বার (পূর্বের মতোই সংরক্ষিত) */}
       {isDownloading && (
         <View style={styles.progressContainer}>
            <Text style={styles.progressText}>ডাউনলোড হচ্ছে... {Math.round(downloadProgress * 100)}%</Text>
