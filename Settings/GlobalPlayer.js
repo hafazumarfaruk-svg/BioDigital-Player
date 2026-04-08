@@ -67,7 +67,6 @@ export default function GlobalPlayer() {
       setIsPlaying(true);
       pan.setValue({ x: 0, y: 0 });
 
-      // [FIX]: লোকাল ফাইল হলে এপিআই কল বাইপাস করে সরাসরি প্লে করা হবে
       if (data.videoData && data.videoData.localUri) {
           setStreamUrl(data.videoData.localUri);
           return;
@@ -86,7 +85,7 @@ export default function GlobalPlayer() {
     });
 
     const qualitySub = DeviceEventEmitter.addListener('qualityChanged', async (newQuality) => {
-      if (videoData && !videoData.localUri) { // লোকাল ভিডিওর ক্ষেত্রে কোয়ালিটি পরিবর্তন প্রযোজ্য নয়
+      if (videoData && !videoData.localUri) { 
         setStreamUrl(null); 
         setVideoKey(Date.now().toString()); 
         await fetchStreamUrl(videoData.id, newQuality);
@@ -98,7 +97,31 @@ export default function GlobalPlayer() {
         if (videoData) setPlayerState('full');
     });
 
-    return () => { playSub.remove(); qualitySub.remove(); minSub.remove(); maxSub.remove(); };
+    // [FIX]: অডিও মোড চালু হলে গ্লোবাল ভিডিও থামানো এবং লুকিয়ে ফেলার ইভেন্ট
+    const pauseSub = DeviceEventEmitter.addListener('pauseVideo', async () => {
+      if (videoRef.current) {
+          await videoRef.current.pauseAsync();
+          setIsPlaying(false);
+      }
+    });
+
+    const stopSub = DeviceEventEmitter.addListener('stopVideo', async () => {
+      if (videoRef.current) {
+          await videoRef.current.pauseAsync();
+      }
+      setPlayerState('hidden');
+      setStreamUrl(null);
+      setIsPlaying(false);
+    });
+
+    return () => { 
+        playSub.remove(); 
+        qualitySub.remove(); 
+        minSub.remove(); 
+        maxSub.remove(); 
+        pauseSub.remove(); // ক্লিনআপ
+        stopSub.remove();  // ক্লিনআপ
+    };
   }, [videoData]);
 
   const panResponder = useRef(PanResponder.create({
