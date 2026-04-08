@@ -25,8 +25,6 @@ export default function PlayerScreen({ route, navigation }) {
   const [downloadType, setDownloadType] = useState('');
 
   const [isDownloading, setIsDownloading] = useState(false);
-  
-  // [FIX]: জিরো-লোডিং অডিও মোড কন্ট্রোল স্টেট
   const [isAudioMode, setIsAudioMode] = useState(videoData?.type === 'audio');
 
   useFocusEffect(
@@ -36,7 +34,6 @@ export default function PlayerScreen({ route, navigation }) {
     }, [])
   );
 
-  // ব্যাকগ্রাউন্ড অডিও ইঞ্জিন কনফিগারেশন
   useEffect(() => {
     const enableBackgroundAudio = async () => {
       try {
@@ -56,6 +53,7 @@ export default function PlayerScreen({ route, navigation }) {
     fetchRelatedVideos(false);
     if (videoId && videoData) {
         DeviceEventEmitter.emit('playVideo', { videoId: videoId, videoData: videoData });
+        setIsAudioMode(videoData?.type === 'audio');
     }
   }, [videoId]);
 
@@ -80,10 +78,13 @@ export default function PlayerScreen({ route, navigation }) {
     } catch (e) {}
   };
 
-  // [FIX]: কোনো বাফারিং বা লোডিং ছাড়াই অডিও-ভিডিও সুইচিং লজিক
+  // [FIX]: গ্লোবাল প্লেয়ারকে অডিও মোডের সিগন্যাল পাঠানো
   const handleBackgroundPlay = () => {
     const newMode = !isAudioMode;
     setIsAudioMode(newMode);
+    
+    // গ্লোবাল প্লেয়ারকে সিগন্যাল দিচ্ছে
+    DeviceEventEmitter.emit('toggleAudioMode', newMode);
     
     if (newMode) {
         Alert.alert("অডিও মোড", "ভিডিও হাইড করা হয়েছে। স্ক্রিন বন্ধ করলেও এখন অডিও চলতে থাকবে।");
@@ -270,20 +271,7 @@ export default function PlayerScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.playerWrapper}>
-        {/* [FIX]: জিরো-ল্যাটেন্সি অডিও কভার (এটি ভিডিওর ওপর ভেসে ওঠে, কিন্তু স্ট্রিম কাটে না) */}
-        {isAudioMode && (
-          <View style={styles.audioPosterContainer}>
-            <Image source={{ uri: videoData.thumbnail }} style={styles.audioPosterBg} blurRadius={15} />
-            <View style={styles.audioPosterOverlay}>
-              <View style={styles.audioIconCircle}>
-                <Ionicons name="musical-notes" size={50} color="#FFF" />
-              </View>
-              <Text style={styles.audioPosterText}>ব্যাকগ্রাউন্ড অডিও প্লে হচ্ছে</Text>
-            </View>
-          </View>
-        )}
-      </View>
+      <View style={styles.playerWrapper}></View>
 
       {isDownloading && (
         <View style={styles.toastContainer}>
@@ -349,12 +337,7 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#0F0F0F' },
     appHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, height: 50 },
     headerIconBtn: { padding: 10 },
-    playerWrapper: { width: '100%', height: PLAYER_HEIGHT, backgroundColor: 'transparent', position: 'relative' },
-    audioPosterContainer: { flex: 1, width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999, backgroundColor: '#111' },
-    audioPosterBg: { width: '100%', height: '100%', opacity: 0.5 },
-    audioPosterOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
-    audioIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0, 191, 165, 0.1)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#00BFA5', marginBottom: 10 },
-    audioPosterText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+    playerWrapper: { width: '100%', height: PLAYER_HEIGHT, backgroundColor: 'transparent' },
     toastContainer: { backgroundColor: '#00BFA5', padding: 10, alignItems: 'center', justifyContent: 'center' },
     toastText: { color: '#000', fontSize: 14, fontWeight: 'bold' },
     detailsContainer: { padding: 12 },
