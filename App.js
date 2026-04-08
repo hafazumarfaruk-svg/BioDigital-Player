@@ -46,7 +46,7 @@ export default function App() {
         <Stack.Screen name="Subscriptions" component={SubscriptionsScreen} options={{ headerShown: false }} />
         
         {/* সার্চ অপশনটি আপনার নির্দেশ অনুযায়ী পূর্ববর্তী ফিক্সের মতো রাখা হলো */}
-        <Stack.Screen name="SearchSettings" component={SearchSetting} options={{ headerShown: false }} />
+        <Stack.Screen name="searchsettings" component={SearchSetting} options={{ headerShown: false }} />
 
         {/* [FIX]: মিসিং স্ক্রিনগুলো এখানে স্ট্যাকে রেজিস্টার করা হলো */}
         <Stack.Screen name="Downloads" component={downloadscreen} options={{ headerShown: false }} />
