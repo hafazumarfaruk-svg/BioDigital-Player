@@ -23,23 +23,23 @@ export default function GlobalPlayer() {
   const videoRef = useRef(null);
   const audioRef = useRef(null); 
   const syncAudioRef = useRef(new Audio.Sound()); 
-  
+
   const currentVideoIdRef = useRef(null);
   const isLocalRef = useRef(false);
-  
+
   const [playerState, setPlayerState] = useState('hidden'); 
   const [videoData, setVideoData] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
   const [audioStreamUrl, setAudioStreamUrl] = useState(null); // [FIX]: অডিও লিংক মেমরিতে সেভ রাখার স্টেট
   const [streamMode, setStreamMode] = useState('combined'); 
-  
+
   const [isPlaying, setIsPlaying] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [videoKey, setVideoKey] = useState(Date.now().toString()); 
-  
+
   const [isAudioMode, setIsAudioMode] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false); 
-  
+
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
 
   const setBackgroundAudio = async (enable) => {
@@ -59,12 +59,12 @@ export default function GlobalPlayer() {
       const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${vidId}`)}&quality=${numQ}&merge=true&t=${Date.now()}`;
       const res = await fetch(apiUrl);
       const json = await res.json();
-      
+
       if (json.success && json.url) {
           setStreamMode(json.streamType || 'combined');
           setStreamUrl(json.url);
           setAudioStreamUrl(json.audioUrl || json.url); // [FIX]: অডিও লিংক সেভ করা হলো
-          
+
           if (json.streamType === 'separate' && json.audioUrl) {
               try {
                   await syncAudioRef.current.unloadAsync();
@@ -77,7 +77,7 @@ export default function GlobalPlayer() {
           setIsPlaying(true);
           setErrorMsg(null);
       } else {
-          setErrorMsg("ভিডিও লিংক পাওয়া যায়নি!");
+          setErrorMsg("ভিডিও লিংক পাওয়া যায়নি!");
       }
     } catch(e) { 
       setErrorMsg("সার্ভার কানেকশন এরর!");
@@ -120,7 +120,7 @@ export default function GlobalPlayer() {
         setIsAudioMode(isAudio);
         return;
       }
-      
+
       setVideoData(data.videoData);
       setPlayerState('full');
       setStreamUrl(null);
@@ -147,7 +147,7 @@ export default function GlobalPlayer() {
         setErrorMsg(null);
         if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
         setVideoKey(Date.now().toString()); 
-        
+
         await fetchStreamUrl(currentVideoIdRef.current, newQuality);
       }
     });
@@ -174,16 +174,16 @@ export default function GlobalPlayer() {
                 if (syncAudioRef.current) {
                     await syncAudioRef.current.pauseAsync();
                 }
-                
-                // [FIX]: মেমরি থেকে সরাসরি অডিও লিংক নিয়ে লোড করা এবং জোরপূর্বক সঠিক সময়ে টেনে নেওয়া
+
+                // [FIX]: মেমরি থেকে সরাসরি অডিও লিংক নিয়ে লোড করা এবং জোরপূর্বক সঠিক সময়ে টেনে নেওয়া
                 const targetAudioUrl = audioStreamUrl || streamUrl;
                 const { sound } = await Audio.Sound.createAsync(
                     { uri: targetAudioUrl },
-                    { shouldPlay: false } // প্রথমে পজ অবস্থায় লোড হবে
+                    { shouldPlay: false } // প্রথমে পজ অবস্থায় লোড হবে
                 );
                 audioRef.current = sound;
-                
-                // বাফার হওয়ার পর পজিশন সেট করে তারপর প্লে করা হবে
+
+                // বাফার হওয়ার পর পজিশন সেট করে তারপর প্লে করা হবে
                 await audioRef.current.setPositionAsync(currentPos);
                 await audioRef.current.playAsync();
                 setIsPlaying(true);
@@ -197,16 +197,23 @@ export default function GlobalPlayer() {
                     await audioRef.current.unloadAsync(); 
                     audioRef.current = null;
                 }
-                
-                if (videoRef.current) {
-                    await videoRef.current.setPositionAsync(currentPos);
-                    await videoRef.current.playAsync(); 
-                }
-                if (syncAudioRef.current && streamMode === 'separate') {
-                    await syncAudioRef.current.setPositionAsync(currentPos);
-                    await syncAudioRef.current.playAsync();
-                }
-                setIsPlaying(true);
+
+                // [সমাধান]: অডিও ইঞ্জিনকে আনলোড হওয়ার পর রিসেট হওয়ার জন্য সামান্য সময় দেওয়া (২০০ms delay)
+                setTimeout(async () => {
+                    try {
+                        if (videoRef.current) {
+                            await videoRef.current.setPositionAsync(currentPos);
+                            await videoRef.current.playAsync(); 
+                        }
+                        if (syncAudioRef.current && streamMode === 'separate') {
+                            await syncAudioRef.current.setPositionAsync(currentPos);
+                            await syncAudioRef.current.playAsync();
+                        }
+                        setIsPlaying(true);
+                    } catch (e) {
+                        console.log("Play error after audio unload:", e);
+                    }
+                }, 200);
             }
         } catch (error) {
             console.log("Switching Error:", error);
@@ -222,7 +229,7 @@ export default function GlobalPlayer() {
           audioRef.current = null;
       }
       if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
-      
+
       setPlayerState('hidden');
       setStreamUrl(null);
       setAudioStreamUrl(null);
@@ -232,7 +239,7 @@ export default function GlobalPlayer() {
     return () => { 
         playSub.remove(); qualitySub.remove(); minSub.remove(); maxSub.remove(); toggleAudioSub.remove(); stopSub.remove();
     };
-  }, [videoData, streamUrl, audioStreamUrl]); // [FIX]: ডিপেন্ডেন্সি আপডেট করা হয়েছে
+  }, [videoData, streamUrl, audioStreamUrl]); // [FIX]: ডিপেন্ডেন্সি আপডেট করা হয়েছে
 
   useEffect(() => {
     return () => {
@@ -302,7 +309,7 @@ export default function GlobalPlayer() {
                     </View>
                   </View>
                )}
-               
+
                {!isFull && (
                   <View style={[styles.overlay, isAudioMode ? {zIndex: 20} : {}]}>
                      <TouchableOpacity style={styles.miniPlayBtn} onPress={async () => {
