@@ -27,7 +27,7 @@ export default function GlobalPlayer() {
   const currentVideoIdRef = useRef(null);
   const isLocalRef = useRef(false);
   const streamUrlRef = useRef(null);
-  const audioStreamUrlRef = useRef(null);
+  const audioStreamUrlRef = useRef(null); 
   const streamModeRef = useRef('combined');
   
   const [playerState, setPlayerState] = useState('hidden'); 
@@ -64,19 +64,21 @@ export default function GlobalPlayer() {
       
       if (json.success && json.url) {
           const fetchedStreamMode = json.streamType || 'combined';
-          const fetchedAudioUrl = json.audioUrl || json.url;
+          const fetchedSyncAudioUrl = json.audioUrl || json.url;
 
           setStreamMode(fetchedStreamMode);
           streamModeRef.current = fetchedStreamMode;
           
           setStreamUrl(json.url);
           streamUrlRef.current = json.url;
-          audioStreamUrlRef.current = fetchedAudioUrl; 
           
-          if (fetchedStreamMode === 'separate' && fetchedAudioUrl) {
+          // [FIX]: অডিও মোডের জন্য সার্ভার থেকে আসা 240p Reliable URL মেমরিতে সেভ রাখা
+          audioStreamUrlRef.current = json.reliableAudioUrl || fetchedSyncAudioUrl; 
+          
+          if (fetchedStreamMode === 'separate' && fetchedSyncAudioUrl) {
               try {
                   await syncAudioRef.current.unloadAsync();
-                  await syncAudioRef.current.loadAsync({ uri: fetchedAudioUrl });
+                  await syncAudioRef.current.loadAsync({ uri: fetchedSyncAudioUrl });
               } catch(e) { console.log(e); }
           } else {
               await syncAudioRef.current.unloadAsync();
@@ -177,33 +179,27 @@ export default function GlobalPlayer() {
 
         try {
             if (mode) {
-                // ভিডিও থেকে অডিও মোডে যাওয়া
                 let currentPos = 0;
                 if (videoRef.current) {
                     const status = await videoRef.current.getStatusAsync();
                     currentPos = status.positionMillis || 0;
-                    await videoRef.current.pauseAsync(); // মূল ভিডিও বন্ধ
+                    await videoRef.current.pauseAsync(); 
                 }
                 if (syncAudioRef.current) {
-                    await syncAudioRef.current.pauseAsync(); // ব্যাকগ্রাউন্ড সিঙ্ক অডিও বন্ধ
+                    await syncAudioRef.current.pauseAsync();
                 }
                 
+                // [FIX]: 240p Reliable MP4 URL লোড করা হচ্ছে 
                 const targetAudioUrl = audioStreamUrlRef.current || streamUrlRef.current;
                 
-                // অডিও লোড এবং সিকিং বাগ ফিক্স
                 const { sound } = await Audio.Sound.createAsync(
                     { uri: targetAudioUrl },
-                    { shouldPlay: false, volume: 1.0, isMuted: false } 
+                    { shouldPlay: true, positionMillis: currentPos, volume: 1.0, isMuted: false } 
                 );
                 audioRef.current = sound;
-                
-                await audioRef.current.playAsync();
-                await audioRef.current.setPositionAsync(currentPos);
-                
                 setIsPlaying(true);
 
             } else {
-                // অডিও থেকে ভিডিও মোডে ফিরে আসা
                 let currentPos = 0;
                 if (audioRef.current) {
                     const status = await audioRef.current.getStatusAsync();
