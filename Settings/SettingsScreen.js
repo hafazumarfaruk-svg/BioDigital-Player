@@ -1,18 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-
-// গ্লোবাল মেমরি ডিক্লেয়ারেশন
-global.appSettings = global.appSettings || {};
-global.appSettings.normalVideo = global.appSettings.normalVideo || 'Auto'; // ডিফল্ট Auto সেট করা হলো
-global.shortVideoQuality = global.shortVideoQuality || 'Normal Video Quality';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 
 export default function SettingsScreen() {
   const [isMainQualityExpanded, setIsMainQualityExpanded] = useState(false);
-  const [selectedMainQuality, setSelectedMainQuality] = useState(global.appSettings.normalVideo);
+  const [selectedMainQuality, setSelectedMainQuality] = useState('Auto'); // ডিফল্ট
 
   const [isShortQualityExpanded, setIsShortQualityExpanded] = useState(false);
-  const [selectedShortQuality, setSelectedShortQuality] = useState(global.shortVideoQuality);
+  const [selectedShortQuality, setSelectedShortQuality] = useState('Normal Video Quality'); // ডিফল্ট
 
   const [isLoading, setIsLoading] = useState(false);
 
@@ -31,7 +28,7 @@ export default function SettingsScreen() {
       '4320p (8K)'
   ];
 
-  // শর্টস ভিডিওর জন্য আগের অপশনগুলো (অপরিবর্তিত)
+  // শর্টস ভিডিওর জন্য অপশনগুলো
   const shortVideoOptions = [
       'Anti Data Saver Mode', 
       'Low Video Quality', 
@@ -39,20 +36,61 @@ export default function SettingsScreen() {
       'High Video Quality 4k-8k'
   ];
 
-  const handleMainQualitySelect = (res) => {
+  // [FIX]: অ্যাপ চালু হলে লোকাল স্টোরেজ থেকে পূর্বের সেভ করা সেটিং লোড করা
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const savedSettings = await AsyncStorage.getItem('appSettings');
+        if (savedSettings) {
+          const parsed = JSON.parse(savedSettings);
+          if (parsed.normalVideo) setSelectedMainQuality(parsed.normalVideo);
+          if (parsed.shortVideoQuality) setSelectedShortQuality(parsed.shortVideoQuality);
+        }
+      } catch (e) {
+        console.error("Settings Load Error:", e);
+      }
+    };
+    loadSettings();
+  }, []);
+
+  // [FIX]: AsyncStorage এ সেভ করা এবং গ্লোবাল প্লেয়ারকে রিয়েল-টাইম সিগন্যাল পাঠানো
+  const handleMainQualitySelect = async (res) => {
     setIsLoading(true); 
-    setTimeout(() => {
-      global.appSettings.normalVideo = res; 
+    try {
+      const savedSettings = await AsyncStorage.getItem('appSettings');
+      const parsed = savedSettings ? JSON.parse(savedSettings) : {};
+      
+      parsed.normalVideo = res;
+      await AsyncStorage.setItem('appSettings', JSON.stringify(parsed));
+      
       setSelectedMainQuality(res);
+      
+      // গ্লোবাল প্লেয়ারকে কোয়ালিটি পরিবর্তনের নির্দেশ দেওয়া
+      DeviceEventEmitter.emit('qualityChanged', res);
+    } catch (error) {
+      console.error("Settings Save Error:", error);
+    }
+
+    setTimeout(() => {
       setIsLoading(false); 
     }, 800);
   };
 
-  const handleShortQualitySelect = (res) => {
+  const handleShortQualitySelect = async (res) => {
     setIsLoading(true); 
-    setTimeout(() => {
-      global.shortVideoQuality = res; 
+    try {
+      const savedSettings = await AsyncStorage.getItem('appSettings');
+      const parsed = savedSettings ? JSON.parse(savedSettings) : {};
+      
+      parsed.shortVideoQuality = res;
+      await AsyncStorage.setItem('appSettings', JSON.stringify(parsed));
+      
       setSelectedShortQuality(res);
+    } catch (error) {
+      console.error("Settings Save Error:", error);
+    }
+
+    setTimeout(() => {
       setIsLoading(false); 
     }, 800);
   };
@@ -78,7 +116,7 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <View style={styles.listSection}>
-          
+
           {/* লং ভিডিও কোয়ালিটি */}
           <ExpandableMenu 
             icon="tv-outline" label="Long Video Quality" 
