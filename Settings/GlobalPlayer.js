@@ -30,6 +30,9 @@ export default function GlobalPlayer() {
   const audioStreamUrlRef = useRef(null);
   const streamModeRef = useRef('combined');
   
+  // [FIX]: কোয়ালিটি পরিবর্তনের সময় ভিডিওর পজিশন ধরে রাখার মেমরি
+  const savedPositionRef = useRef(0); 
+  
   const [playerState, setPlayerState] = useState('hidden'); 
   const [videoData, setVideoData] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
@@ -64,19 +67,23 @@ export default function GlobalPlayer() {
       
       if (json.success && json.url) {
           const fetchedStreamMode = json.streamType || 'combined';
-          const fetchedAudioUrl = json.audioUrl || json.url;
+          const fetchedSyncAudioUrl = json.audioUrl || json.url;
 
           setStreamMode(fetchedStreamMode);
           streamModeRef.current = fetchedStreamMode;
           
           setStreamUrl(json.url);
           streamUrlRef.current = json.url;
-          audioStreamUrlRef.current = fetchedAudioUrl; 
+          audioStreamUrlRef.current = json.reliableAudioUrl || fetchedSyncAudioUrl; 
           
-          if (fetchedStreamMode === 'separate' && fetchedAudioUrl) {
+          if (fetchedStreamMode === 'separate' && fetchedSyncAudioUrl) {
               try {
                   await syncAudioRef.current.unloadAsync();
-                  await syncAudioRef.current.loadAsync({ uri: fetchedAudioUrl });
+                  // [FIX]: নতুন কোয়ালিটির অডিওকেও সঠিক সময়ে (Saved Position) লোড করা
+                  await syncAudioRef.current.loadAsync(
+                      { uri: fetchedSyncAudioUrl },
+                      { positionMillis: savedPositionRef.current }
+                  );
               } catch(e) { console.log(e); }
           } else {
               await syncAudioRef.current.unloadAsync();
@@ -129,6 +136,8 @@ export default function GlobalPlayer() {
         return;
       }
       
+      savedPositionRef.current = 0; // সম্পূর্ণ নতুন ভিডিও হলে পজিশন জিরো হবে
+      
       setVideoData(data.videoData);
       setPlayerState('full');
       setStreamUrl(null);
@@ -153,11 +162,22 @@ export default function GlobalPlayer() {
 
     const qualitySub = DeviceEventEmitter.addListener('qualityChanged', async (newQuality) => {
       if (currentVideoIdRef.current && !isLocalRef.current) { 
+        
+        // [FIX]: কোয়ালিটি পরিবর্তনের আগে বর্তমান পজিশনটি কপি করে নেওয়া হচ্ছে
+        let currentPos = 0;
+        if (videoRef.current) {
+            const status = await videoRef.current.getStatusAsync();
+            currentPos = status.positionMillis || 0;
+            await videoRef.current.pauseAsync();
+        }
+        savedPositionRef.current = currentPos;
+
         setIsPlaying(false); 
         setStreamUrl(null);  
         streamUrlRef.current = null;
         audioStreamUrlRef.current = null;
         setErrorMsg(null);
+        
         if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
         setVideoKey(Date.now().toString()); 
         
@@ -177,33 +197,26 @@ export default function GlobalPlayer() {
 
         try {
             if (mode) {
-                // ভিডিও থেকে অডিও মোডে যাওয়া
                 let currentPos = 0;
                 if (videoRef.current) {
                     const status = await videoRef.current.getStatusAsync();
                     currentPos = status.positionMillis || 0;
-                    await videoRef.current.pauseAsync(); // মূল ভিডিও বন্ধ
+                    await videoRef.current.pauseAsync(); 
                 }
                 if (syncAudioRef.current) {
-                    await syncAudioRef.current.pauseAsync(); // ব্যাকগ্রাউন্ড সিঙ্ক অডিও বন্ধ
+                    await syncAudioRef.current.pauseAsync();
                 }
                 
                 const targetAudioUrl = audioStreamUrlRef.current || streamUrlRef.current;
                 
-                // অডিও লোড এবং সিকিং বাগ ফিক্স
                 const { sound } = await Audio.Sound.createAsync(
                     { uri: targetAudioUrl },
-                    { shouldPlay: false, volume: 1.0, isMuted: false } 
+                    { shouldPlay: true, positionMillis: currentPos, volume: 1.0, isMuted: false } 
                 );
                 audioRef.current = sound;
-                
-                await audioRef.current.playAsync();
-                await audioRef.current.setPositionAsync(currentPos);
-                
                 setIsPlaying(true);
 
             } else {
-                // অডিও থেকে ভিডিও মোডে ফিরে আসা
                 let currentPos = 0;
                 if (audioRef.current) {
                     const status = await audioRef.current.getStatusAsync();
@@ -289,6 +302,10 @@ export default function GlobalPlayer() {
                       ref={videoRef} 
                       source={{ uri: streamUrl }} 
                       style={styles.video} 
+                      
+                      // [FIX]: নতুন কোয়ালিটির ভিডিও লোড হলে সংরক্ষিত পজিশন থেকে প্লে শুরু হবে
+                      positionMillis={savedPositionRef.current} 
+                      
                       shouldPlay={isPlaying && !isAudioMode} 
                       isMuted={streamMode === 'separate'} 
                       useNativeControls={isFull} 
