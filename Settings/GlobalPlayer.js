@@ -12,7 +12,6 @@ const MINI_WIDTH = width * 0.45;
 const MINI_HEIGHT = (MINI_WIDTH * 9) / 16;
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
 
-// [FIX]: যেকোনো স্ট্রিং থেকে নিখুঁতভাবে রেজোলিউশন নম্বর বের করার জন্য Regex ব্যবহার
 const getNumericQuality = (q) => {
     if (!q || String(q).toLowerCase() === 'auto') return '720';
     const match = String(q).match(/\d+/);
@@ -22,7 +21,8 @@ const getNumericQuality = (q) => {
 export default function GlobalPlayer() {
   const navigation = useNavigation();
   const videoRef = useRef(null);
-  const audioRef = useRef(null); 
+  const audioRef = useRef(null); // ব্যাকগ্রাউন্ড পিওর অডিও মোডের জন্য
+  const syncAudioRef = useRef(new Audio.Sound()); // [NEW]: 1080p+ এর আলাদা অডিও সিঙ্ক করার জন্য
   
   const currentVideoIdRef = useRef(null);
   const isLocalRef = useRef(false);
@@ -30,6 +30,8 @@ export default function GlobalPlayer() {
   const [playerState, setPlayerState] = useState('hidden'); 
   const [videoData, setVideoData] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
+  const [streamMode, setStreamMode] = useState('combined'); // [NEW]: অডিও-ভিডিও আলাদা নাকি একসাথে
+  
   const [isPlaying, setIsPlaying] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [videoKey, setVideoKey] = useState(Date.now().toString()); 
@@ -56,9 +58,22 @@ export default function GlobalPlayer() {
       const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${vidId}`)}&quality=${numQ}&merge=true&t=${Date.now()}`;
       const res = await fetch(apiUrl);
       const json = await res.json();
+      
       if (json.success && json.url) {
+          setStreamMode(json.streamType || 'combined');
           setStreamUrl(json.url);
-          setIsPlaying(true); // নতুন লিংক আসার পর প্লে শুরু
+          
+          // [NEW]: যদি 1080p+ হয়, তবে অডিও ট্র্যাকটি সিঙ্ক প্লেয়ারে লোড করা
+          if (json.streamType === 'separate' && json.audioUrl) {
+              try {
+                  await syncAudioRef.current.unloadAsync();
+                  await syncAudioRef.current.loadAsync({ uri: json.audioUrl });
+              } catch(e) { console.log(e); }
+          } else {
+              await syncAudioRef.current.unloadAsync();
+          }
+
+          setIsPlaying(true);
           setErrorMsg(null);
       } else {
           setErrorMsg("ভিডিও লিংক পাওয়া যায়নি!");
@@ -68,12 +83,31 @@ export default function GlobalPlayer() {
     }
   };
 
+  // [NEW]: ভিডিওর সাথে অডিওর ঠোঁট মেলানোর (Lip-sync) লজিক
+  const handlePlaybackStatusUpdate = async (status) => {
+    if (streamMode === 'separate' && syncAudioRef.current && status.isLoaded && !isAudioMode) {
+        const audioStatus = await syncAudioRef.current.getStatusAsync();
+        if (!audioStatus.isLoaded) return;
+
+        if (status.isPlaying && !audioStatus.isPlaying) {
+            await syncAudioRef.current.playAsync();
+        } else if (!status.isPlaying && audioStatus.isPlaying) {
+            await syncAudioRef.current.pauseAsync();
+        }
+
+        if (status.isPlaying && Math.abs(status.positionMillis - audioStatus.positionMillis) > 500) {
+            await syncAudioRef.current.setPositionAsync(status.positionMillis);
+        }
+    }
+  };
+
   useEffect(() => {
     const playSub = DeviceEventEmitter.addListener('playVideo', async (data) => {
       if (audioRef.current) {
         await audioRef.current.unloadAsync();
         audioRef.current = null;
       }
+      if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
 
       const isAudio = data.videoData?.type === 'audio';
       await setBackgroundAudio(isAudio); 
@@ -100,25 +134,17 @@ export default function GlobalPlayer() {
           return;
       }
 
-      let targetQuality = '720p';
-      try {
-        const savedAppSet = await AsyncStorage.getItem('appSettings');
-        if (savedAppSet) {
-            const parsed = JSON.parse(savedAppSet);
-            if (parsed.normalVideo) targetQuality = parsed.normalVideo;
-        }
-      } catch(e) {}
-
+      const targetQuality = global.appSettings?.normalVideo || '720p';
       await fetchStreamUrl(data.videoId, targetQuality);
     });
 
-    // [FIX]: কোয়ালিটি পরিবর্তনের সিগন্যাল রিসিভ করা এবং ফোর্স রিস্টার্ট করা
     const qualitySub = DeviceEventEmitter.addListener('qualityChanged', async (newQuality) => {
       if (currentVideoIdRef.current && !isLocalRef.current) { 
-        setIsPlaying(false); // চলতি ভিডিও থামানো
-        setStreamUrl(null);  // লোডিং স্পিনার শো করানো
+        setIsPlaying(false); 
+        setStreamUrl(null);  
         setErrorMsg(null);
-        setVideoKey(Date.now().toString()); // কম্পোনেন্ট ফোর্স রিমুন্ট (Cache Clear)
+        if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
+        setVideoKey(Date.now().toString()); 
         
         await fetchStreamUrl(currentVideoIdRef.current, newQuality);
       }
@@ -132,14 +158,13 @@ export default function GlobalPlayer() {
     const toggleAudioSub = DeviceEventEmitter.addListener('toggleAudioMode', async (mode) => {
         setIsSwitching(true);
         setIsAudioMode(mode);
-        
         await setBackgroundAudio(mode); 
 
         try {
             if (mode) {
                 if (videoRef.current) {
                     const status = await videoRef.current.getStatusAsync();
-                    await videoRef.current.pauseAsync(); 
+                    await videoRef.current.pauseAsync(); // ভিডিও পজ করলে syncAudio স্বয়ংক্রিয়ভাবে পজ হবে
                     
                     let audioOnlyUrl = streamUrl;
                     if (!isLocalRef.current) {
@@ -173,7 +198,6 @@ export default function GlobalPlayer() {
         } catch (error) {
             console.log("Switching Error:", error);
         }
-        
         setIsSwitching(false);
     });
 
@@ -184,6 +208,8 @@ export default function GlobalPlayer() {
           await audioRef.current.unloadAsync();
           audioRef.current = null;
       }
+      if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
+      
       setPlayerState('hidden');
       setStreamUrl(null);
       setIsPlaying(false);
@@ -197,6 +223,7 @@ export default function GlobalPlayer() {
   useEffect(() => {
     return () => {
       if (audioRef.current) audioRef.current.unloadAsync();
+      if (syncAudioRef.current) syncAudioRef.current.unloadAsync();
     };
   }, []);
 
@@ -230,8 +257,14 @@ export default function GlobalPlayer() {
                   <View style={{ flex: 1, display: isAudioMode ? 'none' : 'flex' }}>
                     <Video 
                       key={videoKey} 
-                      ref={videoRef} source={{ uri: streamUrl }} style={styles.video} 
-                      shouldPlay={isPlaying && !isAudioMode} useNativeControls={isFull} resizeMode={isFull ? "contain" : "cover"} 
+                      ref={videoRef} 
+                      source={{ uri: streamUrl }} 
+                      style={styles.video} 
+                      shouldPlay={isPlaying && !isAudioMode} 
+                      isMuted={streamMode === 'separate'} // [NEW]: আলাদা অডিও থাকলে ভিডিও মিউট থাকবে
+                      useNativeControls={isFull} 
+                      resizeMode={isFull ? "contain" : "cover"} 
+                      onPlaybackStatusUpdate={handlePlaybackStatusUpdate} // [NEW]: সিঙ্ক ফাংশন
                     />
                   </View>
                ) : (
@@ -275,6 +308,7 @@ export default function GlobalPlayer() {
                          await setBackgroundAudio(false); 
                          if (videoRef.current) await videoRef.current.pauseAsync();
                          if (audioRef.current) await audioRef.current.unloadAsync();
+                         if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
                          setPlayerState('hidden'); setVideoData(null); setStreamUrl(null); pan.setValue({ x:0, y:0 });
                      }}>
                         <Ionicons name="close" size={24} color="#FFF" />
