@@ -4,7 +4,6 @@ import { Video, Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { DeviceEventEmitter } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16;
@@ -59,7 +58,6 @@ export default function GlobalPlayer() {
     } catch (e) { console.log(e); }
   };
 
-  // [SPEED FIX]: Fast Play API ব্যবহার করে এক রিকোয়েস্টেই ভিডিও নিয়ে আসা
   const fetchStreamUrl = async (vidId, targetQuality) => {
     const requestedQ = getNumericQuality(targetQuality);
     setErrorMsg(null);
@@ -71,16 +69,24 @@ export default function GlobalPlayer() {
 
         if (json.success && json.url) {
             setStreamMode(json.streamType || 'combined');
-            setStreamUrl(json.url);
-            setAudioStreamUrl(json.audioUrl || json.url); 
-
+            
+            // [SPEED UPDATE]: State update একসাথে করা হচ্ছে রি-রেন্ডার কমানোর জন্য
             if (json.streamType === 'separate' && json.audioUrl) {
-                try {
-                    await syncAudioRef.current.unloadAsync();
-                    await syncAudioRef.current.loadAsync({ uri: json.audioUrl });
-                } catch(e) { console.log(e); }
+                // ভিডিও এবং অডিও একসাথে লোড করার ট্রিক
+                Promise.all([
+                    syncAudioRef.current.unloadAsync(),
+                    setStreamUrl(json.url),
+                    setAudioStreamUrl(json.audioUrl)
+                ]).then(() => {
+                    syncAudioRef.current.loadAsync(
+                        { uri: json.audioUrl }, 
+                        { shouldPlay: true, progressUpdateIntervalMillis: 100 } // রকেট স্পিড প্লেব্যাক
+                    ).catch(e => console.log(e));
+                });
             } else {
                 await syncAudioRef.current.unloadAsync();
+                setStreamUrl(json.url);
+                setAudioStreamUrl(json.url);
             }
 
             setIsPlaying(true);
@@ -99,13 +105,15 @@ export default function GlobalPlayer() {
         const audioStatus = await syncAudioRef.current.getStatusAsync();
         if (!audioStatus.isLoaded) return;
 
+        // [SPEED UPDATE]: বাফারিং এর সময় কমানো হয়েছে এবং সিঙ্ক্রোনাইজেশন টাইট করা হয়েছে
         if (status.isPlaying && !audioStatus.isPlaying) {
             await syncAudioRef.current.playAsync();
         } else if (!status.isPlaying && audioStatus.isPlaying) {
             await syncAudioRef.current.pauseAsync();
         }
 
-        if (status.isPlaying && Math.abs(status.positionMillis - audioStatus.positionMillis) > 500) {
+        // যদি ভিডিও এবং অডিওর মধ্যে ২০০ms এর বেশি পার্থক্য থাকে, তবেই সিঙ্ক হবে
+        if (status.isPlaying && Math.abs(status.positionMillis - audioStatus.positionMillis) > 200) {
             await syncAudioRef.current.setPositionAsync(status.positionMillis);
         }
     }
@@ -136,7 +144,6 @@ export default function GlobalPlayer() {
                 let targetAudioUrl = null; 
                 if (!isLocalRef.current && currentVideoIdRef.current) {
                     try {
-                        // [SPEED FIX]: অডিওর জন্যও Fast Play API ব্যবহার করা হচ্ছে
                         const apiUrl = `${MY_API_SERVER}/api/fast-play?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${currentVideoIdRef.current}`)}&type=audio`;
                         const res = await fetch(apiUrl);
                         const json = await res.json();
@@ -149,12 +156,9 @@ export default function GlobalPlayer() {
 
                 const { sound } = await Audio.Sound.createAsync(
                     { uri: targetAudioUrl },
-                    { shouldPlay: false } 
+                    { shouldPlay: true, positionMillis: currentPos } // [SPEED UPDATE]: লোড হওয়ার সাথেই প্লে হবে এবং নির্দিষ্ট পজিশনে
                 );
                 audioRef.current = sound;
-
-                await audioRef.current.setPositionAsync(currentPos);
-                await audioRef.current.playAsync();
                 setIsPlaying(true);
             }
         } catch (error) { console.log("Switching Error:", error); }
@@ -181,24 +185,22 @@ export default function GlobalPlayer() {
             if (audioRef.current) {
                 const status = await audioRef.current.getStatusAsync();
                 currentPos = status.positionMillis || 0;
-                await audioRef.current.unloadAsync(); 
-                audioRef.current = null;
+                
+                // [SPEED UPDATE]: আনলোড এবং প্লেব্যাক প্যারালাল করা হয়েছে
+                Promise.all([
+                    audioRef.current.unloadAsync(),
+                    videoRef.current ? videoRef.current.setPositionAsync(currentPos) : Promise.resolve(),
+                    syncAudioRef.current && streamMode === 'separate' ? syncAudioRef.current.setPositionAsync(currentPos) : Promise.resolve()
+                ]).then(async () => {
+                     audioRef.current = null;
+                     if (videoRef.current) await videoRef.current.playAsync();
+                     if (syncAudioRef.current && streamMode === 'separate') await syncAudioRef.current.playAsync();
+                     setIsPlaying(true);
+                     setIsSwitching(false);
+                });
+            } else {
+                 setIsSwitching(false);
             }
-
-            setTimeout(async () => {
-                try {
-                    if (videoRef.current) {
-                        await videoRef.current.setPositionAsync(currentPos);
-                        await videoRef.current.playAsync(); 
-                    }
-                    if (syncAudioRef.current && streamMode === 'separate') {
-                        await syncAudioRef.current.setPositionAsync(currentPos);
-                        await syncAudioRef.current.playAsync();
-                    }
-                    setIsPlaying(true);
-                } catch (e) {}
-                setIsSwitching(false);
-            }, 200);
         } catch (e) { setIsSwitching(false); }
     };
 
@@ -326,8 +328,7 @@ export default function GlobalPlayer() {
                       isMuted={streamMode === 'separate'} 
                       useNativeControls={isFull} 
                       resizeMode={isFull ? "contain" : "cover"} 
-                      // [SPEED FIX]: বাফারিং দ্রুত করার জন্য কনফিগারেশন
-                      progressUpdateIntervalMillis={500}
+                      progressUpdateIntervalMillis={200} // [SPEED UPDATE]: বাফারিং ট্র্যাক ফাস্ট করা হয়েছে
                       onPlaybackStatusUpdate={handlePlaybackStatusUpdate} 
                     />
                   </View>
