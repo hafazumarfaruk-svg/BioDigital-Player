@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Dimensions, Animated, PanResponder, TouchableOpacity, Text, ActivityIndicator, Image } from 'react-native';
+import { View, StyleSheet, Dimensions, Animated, PanResponder, TouchableOpacity, Text, ActivityIndicator, Image, Alert } from 'react-native';
 import { Video, Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { DeviceEventEmitter } from 'react-native';
@@ -12,7 +12,6 @@ const MINI_WIDTH = width * 0.45;
 const MINI_HEIGHT = (MINI_WIDTH * 9) / 16;
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
 
-// [NEW]: কোয়ালিটি ডাউনগ্রেড করার জন্য একটি সিরিয়াল লিস্ট
 const QUALITY_FALLBACK_ORDER = ['4320', '2160', '1440', '1080', '720', '480', '360', '240', '144'];
 
 const getNumericQuality = (q) => {
@@ -29,6 +28,7 @@ export default function GlobalPlayer() {
 
   const currentVideoIdRef = useRef(null);
   const isLocalRef = useRef(false);
+  const isAudioModeRef = useRef(false); // [FIX]: ইভেন্ট লিসেনারের ভেতরে সঠিক স্টেট ট্র্যাক রাখার জন্য
 
   const [playerState, setPlayerState] = useState('hidden'); 
   const [videoData, setVideoData] = useState(null);
@@ -59,11 +59,10 @@ export default function GlobalPlayer() {
   const fetchStreamUrl = async (vidId, targetQuality) => {
     const requestedQ = getNumericQuality(targetQuality);
     let startIndex = QUALITY_FALLBACK_ORDER.indexOf(requestedQ);
-    if (startIndex === -1) startIndex = 4; // ডিফল্ট 720p যদি লিস্টে না থাকে
+    if (startIndex === -1) startIndex = 4; 
 
     setErrorMsg(null);
 
-    // [FIX]: যদি নির্দিষ্ট কোয়ালিটি না পায় তবে অটোমেটিক নিচের কোয়ালিটি চেক করবে
     for (let i = startIndex; i < QUALITY_FALLBACK_ORDER.length; i++) {
         let attemptQ = QUALITY_FALLBACK_ORDER[i];
         try {
@@ -87,14 +86,12 @@ export default function GlobalPlayer() {
 
                 setIsPlaying(true);
                 setErrorMsg(null);
-                return; // সফলভাবে লিংক পেলে ফাংশন এখানেই শেষ হবে
+                return; 
             }
         } catch(e) { 
             console.log(`Failed to fetch ${attemptQ}p`, e);
         }
     }
-
-    // যদি কোনো কোয়ালিটিতেই ভিডিও না পাওয়া যায়
     setErrorMsg("কোনো কোয়ালিটিতেই ভিডিও লিংক পাওয়া যায়নি!");
   };
 
@@ -116,13 +113,100 @@ export default function GlobalPlayer() {
   };
 
   useEffect(() => {
+    // [FIX]: কোড ক্লিন রাখার জন্য অডিও/ভিডিও সুইচ লজিক আলাদা ফাংশনে আনা হয়েছে
+    const switchToVideoMode = async () => {
+        setIsSwitching(true);
+        setIsAudioMode(false);
+        isAudioModeRef.current = false;
+        await setBackgroundAudio(false); 
+
+        let currentPos = 0;
+        if (audioRef.current) {
+            const status = await audioRef.current.getStatusAsync();
+            currentPos = status.positionMillis || 0;
+            await audioRef.current.unloadAsync(); 
+            audioRef.current = null;
+        }
+
+        setTimeout(async () => {
+            try {
+                if (videoRef.current) {
+                    await videoRef.current.setPositionAsync(currentPos);
+                    await videoRef.current.playAsync(); 
+                }
+                if (syncAudioRef.current && streamMode === 'separate') {
+                    await syncAudioRef.current.setPositionAsync(currentPos);
+                    await syncAudioRef.current.playAsync();
+                }
+                setIsPlaying(true);
+            } catch (e) {
+                console.log("Play error after audio unload:", e);
+            }
+            setIsSwitching(false);
+        }, 200);
+    };
+
+    const switchToAudioMode = async (qualityType) => {
+        setIsSwitching(true);
+        setIsAudioMode(true);
+        isAudioModeRef.current = true;
+        await setBackgroundAudio(true); 
+
+        try {
+            let currentPos = 0;
+            if (videoRef.current) {
+                const status = await videoRef.current.getStatusAsync();
+                currentPos = status.positionMillis || 0;
+                await videoRef.current.pauseAsync(); 
+            }
+            if (syncAudioRef.current) {
+                await syncAudioRef.current.pauseAsync();
+            }
+
+            let targetAudioUrl = audioStreamUrl || streamUrl;
+
+            // [NEW]: মিডিয়াম কোয়ালিটির জন্য ২৪০p অডিও ফেচ করা
+            if (qualityType === 'medium' && currentVideoIdRef.current && !isLocalRef.current) {
+                try {
+                    const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${currentVideoIdRef.current}`)}&quality=240&merge=true&t=${Date.now()}`;
+                    const res = await fetch(apiUrl);
+                    const json = await res.json();
+                    if (json.success && (json.audioUrl || json.url)) {
+                        targetAudioUrl = json.audioUrl || json.url;
+                    }
+                } catch(e) { console.log("Failed to fetch 240p audio fallback", e); }
+            }
+
+            const { sound } = await Audio.Sound.createAsync(
+                { uri: targetAudioUrl },
+                { shouldPlay: false } 
+            );
+            audioRef.current = sound;
+
+            await audioRef.current.setPositionAsync(currentPos);
+            await audioRef.current.playAsync();
+            setIsPlaying(true);
+        } catch (error) {
+            console.log("Switching Error:", error);
+        }
+        setIsSwitching(false);
+    };
+
+
     const playSub = DeviceEventEmitter.addListener('playVideo', async (data) => {
       const isAudio = data.videoData?.type === 'audio';
 
       if (videoData?.id === data.videoId) {
         setPlayerState('full');
-        setIsAudioMode(isAudio);
-        await setBackgroundAudio(isAudio);
+        
+        // [FIX]: অডিও মোড থেকে ভিডিওতে চাপ দিয়ে ফিরলে দুটি অডিও একসাথে চলার সমস্যা সমাধান
+        if (isAudioModeRef.current) {
+            await switchToVideoMode();
+        } else {
+            setIsAudioMode(isAudio);
+            isAudioModeRef.current = isAudio;
+            await setBackgroundAudio(isAudio);
+        }
         return; 
       }
 
@@ -134,6 +218,8 @@ export default function GlobalPlayer() {
         await syncAudioRef.current.unloadAsync();
       }
 
+      setIsAudioMode(isAudio);
+      isAudioModeRef.current = isAudio;
       await setBackgroundAudio(isAudio); 
 
       currentVideoIdRef.current = data.videoId;
@@ -145,7 +231,6 @@ export default function GlobalPlayer() {
       setAudioStreamUrl(null);
       setErrorMsg(null);
       setIsPlaying(true);
-      setIsAudioMode(isAudio);
       pan.setValue({ x: 0, y: 0 });
 
       if (isLocalRef.current) {
@@ -175,77 +260,21 @@ export default function GlobalPlayer() {
         if (videoData) setPlayerState('full');
     });
 
-    const toggleAudioSub = DeviceEventEmitter.addListener('toggleAudioMode', async (mode) => {
-        setIsSwitching(true);
-        setIsAudioMode(mode);
-        await setBackgroundAudio(mode); 
-
-        try {
-            if (mode) {
-                let currentPos = 0;
-                if (videoRef.current) {
-                    const status = await videoRef.current.getStatusAsync();
-                    currentPos = status.positionMillis || 0;
-                    await videoRef.current.pauseAsync(); 
-                }
-                if (syncAudioRef.current) {
-                    await syncAudioRef.current.pauseAsync();
-                }
-
-                let targetAudioUrl = audioStreamUrl || streamUrl;
-
-                // [UPDATE]: ৭৫p থেকে ৭২০p এর মধ্যে হলে ব্যাকগ্রাউন্ড অডিওর জন্য ২৪০p কোয়ালিটি ফেচ করা
-                const currentQNum = parseInt(getNumericQuality(global.appSettings?.normalVideo || '720'));
-                if (currentQNum >= 75 && currentQNum <= 720 && currentVideoIdRef.current && !isLocalRef.current) {
-                    try {
-                        const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${currentVideoIdRef.current}`)}&quality=240&merge=true&t=${Date.now()}`;
-                        const res = await fetch(apiUrl);
-                        const json = await res.json();
-                        if (json.success && (json.audioUrl || json.url)) {
-                            targetAudioUrl = json.audioUrl || json.url;
-                        }
-                    } catch(e) { console.log("Failed to fetch 240p audio fallback", e); }
-                }
-
-                const { sound } = await Audio.Sound.createAsync(
-                    { uri: targetAudioUrl },
-                    { shouldPlay: false } 
-                );
-                audioRef.current = sound;
-
-                await audioRef.current.setPositionAsync(currentPos);
-                await audioRef.current.playAsync();
-                setIsPlaying(true);
-
-            } else {
-                let currentPos = 0;
-                if (audioRef.current) {
-                    const status = await audioRef.current.getStatusAsync();
-                    currentPos = status.positionMillis || 0;
-                    await audioRef.current.unloadAsync(); 
-                    audioRef.current = null;
-                }
-
-                setTimeout(async () => {
-                    try {
-                        if (videoRef.current) {
-                            await videoRef.current.setPositionAsync(currentPos);
-                            await videoRef.current.playAsync(); 
-                        }
-                        if (syncAudioRef.current && streamMode === 'separate') {
-                            await syncAudioRef.current.setPositionAsync(currentPos);
-                            await syncAudioRef.current.playAsync();
-                        }
-                        setIsPlaying(true);
-                    } catch (e) {
-                        console.log("Play error after audio unload:", e);
-                    }
-                }, 200);
-            }
-        } catch (error) {
-            console.log("Switching Error:", error);
+    const toggleAudioSub = DeviceEventEmitter.addListener('toggleAudioMode', (mode) => {
+        if (mode) {
+            // [NEW]: ব্যাকগ্রাউন্ড অডিও বাটনে চাপ দিলে Medium/High অপশন আসবে
+            Alert.alert(
+                "অডিও কোয়ালিটি",
+                "ব্যাকগ্রাউন্ড অডিওর কোয়ালিটি নির্বাচন করুন:",
+                [
+                    { text: "Medium (240p)", onPress: () => switchToAudioMode('medium') },
+                    { text: "High (Original)", onPress: () => switchToAudioMode('high') },
+                    { text: "Cancel", style: "cancel" }
+                ]
+            );
+        } else {
+            switchToVideoMode();
         }
-        setIsSwitching(false);
     });
 
     const stopSub = DeviceEventEmitter.addListener('stopVideo', async () => {
