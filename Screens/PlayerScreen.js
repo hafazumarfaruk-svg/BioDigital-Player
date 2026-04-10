@@ -84,7 +84,7 @@ export default function PlayerScreen({ route, navigation }) {
       const resJson = await response.json();
 
       if (resJson.success) {
-          Alert.alert("ডাউনলোড শুরু হয়েছে", "ফাইলটি আপনার MyTube ফোল্ডারে সেভ হচ্ছে।");
+          Alert.alert("ডাউনলোড শুরু হয়েছে", "ফাইলটি সার্ভারের মাধ্যমে MyTube ফোল্ডারে সেভ হচ্ছে।");
 
           const progressInterval = setInterval(async () => {
               try {
@@ -362,7 +362,7 @@ const styles = StyleSheet.create({
     recThumb: { width: 140, height: 80, borderRadius: 8, backgroundColor: '#222' },
     recInfo: { flex: 1, marginLeft: 12, justifyContent: 'center' },
     recTitle: { color: '#FFF', fontSize: 14 },
-    recMeta: { color: '#AAA', fontSize: 11, marginTop: 4 }, // [FIXED]: এখানে কালার মিসিং ছিল
+    recMeta: { color: '#AAA', fontSize: 11, marginTop: 4 },
     offlineTypeIndicator: { position: 'absolute', bottom: 15, left: 15, backgroundColor: 'rgba(0,0,0,0.7)', padding: 4, borderRadius: 12 },
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
     modalContent: { backgroundColor: '#1A1A1A', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 30, maxHeight: height * 0.7, minHeight: 350 },
@@ -372,4 +372,4 @@ const styles = StyleSheet.create({
     modalSubtitle: { color: '#888', fontSize: 13, marginTop: 3 },
     modalCloseBtn: { padding: 6, backgroundColor: '#2A2A2A', borderRadius: 20 },
     selectionRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 10 },
-    selectCard: { backgroun
+    selectCard: { backgroundColor: '#242424', bor
