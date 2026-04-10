@@ -33,8 +33,6 @@ export default function PlayerScreen({ route, navigation }) {
     }, [])
   );
 
-  // [FIX]: এখান থেকে গ্লোবাল ব্যাকগ্রাউন্ড অডিও পারমিশনটি রিমুভ করা হয়েছে
-
   useEffect(() => {
     checkSubscriptionStatus();
     fetchRelatedVideos(false);
@@ -68,13 +66,13 @@ export default function PlayerScreen({ route, navigation }) {
   const handleBackgroundPlay = () => {
     const newMode = !isAudioMode;
     setIsAudioMode(newMode);
-    
+
     DeviceEventEmitter.emit('toggleAudioMode', newMode);
-    
+
     if (newMode) {
-        Alert.alert("অডিও মোড", "ভিডিও হাইড করা হয়েছে। স্ক্রিন বন্ধ করলেও এখন অডিও চলতে থাকবে।");
+        Alert.alert("অডিও মোড", "ভিডিও হাইড করা হয়েছে। স্ক্রিন বন্ধ করলেও এখন অডিও চলতে থাকবে।");
     } else {
-        Alert.alert("ভিডিও মোড", "ভিডিও পুনরায় দৃশ্যমান করা হয়েছে।");
+        Alert.alert("ভিডিও মোড", "ভিডিও পুনরায় দৃশ্যমান করা হয়েছে।");
     }
   };
 
@@ -100,7 +98,7 @@ export default function PlayerScreen({ route, navigation }) {
         (downloadInfo) => { 
             const progress = downloadInfo.totalBytesWritten / downloadInfo.totalBytesExpectedToWrite;
             const percentage = Math.round(progress * 100);
-            
+
             DeviceEventEmitter.emit('live_download_progress', {
                 id: downloadId,
                 title: videoData.title,
@@ -121,10 +119,10 @@ export default function PlayerScreen({ route, navigation }) {
       await AsyncStorage.setItem('recorded_downloads', JSON.stringify(downloadList));
 
       DeviceEventEmitter.emit('live_download_complete', { id: downloadId });
-      Alert.alert("সম্পন্ন", "ফাইলটি সফলভাবে ডাউনলোড হয়েছে।");
+      Alert.alert("সম্পন্ন", "ফাইলটি সফলভাবে ডাউনলোড হয়েছে।");
     } catch (error) {
       DeviceEventEmitter.emit('live_download_complete', { id: 'error' });
-      Alert.alert("ত্রুটি", "ডাউনলোড ব্যর্থ হয়েছে।");
+      Alert.alert("ত্রুটি", "ডাউনলোড ব্যর্থ হয়েছে।");
     }
   };
 
@@ -137,7 +135,10 @@ export default function PlayerScreen({ route, navigation }) {
   const fetchDownloadLinks = async (type) => {
     try {
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(targetUrl)}&action=download`;
+      
+      // [FIX]: অডিও/ভিডিও অনুযায়ী নির্দিষ্ট রিকোয়েস্ট পাঠানোর জন্য type প্যারামিটার যুক্ত করা হলো
+      const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(targetUrl)}&action=download&type=${type}`;
+      
       const response = await fetch(apiUrl);
       const data = await response.json();
 
@@ -203,7 +204,7 @@ export default function PlayerScreen({ route, navigation }) {
          <TouchableOpacity activeOpacity={0.8} onPress={() => setIsExpandedDesc(!isExpandedDesc)} style={styles.titleTextContainer}>
             <Text style={styles.mainTitle} numberOfLines={isExpandedDesc ? null : 2}>{videoData?.title}</Text>
          </TouchableOpacity>
-         
+
          <View style={styles.actionRow}>
             <TouchableOpacity style={[styles.actionIconBtn, isAudioMode ? {backgroundColor: '#00BFA5'} : {}]} onPress={handleBackgroundPlay}>
                <Ionicons name="headset-outline" size={24} color={isAudioMode ? "#000" : "#00BFA5"} />
@@ -259,7 +260,7 @@ export default function PlayerScreen({ route, navigation }) {
 
       {isDownloading && (
         <View style={styles.toastContainer}>
-           <Text style={styles.toastText}>প্রক্রিয়া শুরু হচ্ছে...</Text>
+           <Text style={styles.toastText}>প্রক্রিয়া শুরু হচ্ছে...</Text>
         </View>
       )}
 
@@ -286,29 +287,69 @@ export default function PlayerScreen({ route, navigation }) {
         showsVerticalScrollIndicator={false}
       />
 
+      {/* [UPDATE]: প্রো-লেভেল ডাউনলোড বটম শিট ডিজাইন */}
       <Modal visible={showDownloadModal} transparent animationType="slide" onRequestClose={() => setShowDownloadModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
+            <View style={styles.modalDragIndicator} />
+            
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>ডাউনলোড অপশন</Text>
-              <TouchableOpacity onPress={() => setShowDownloadModal(false)}><Ionicons name="close" size={26} color="#FFF" /></TouchableOpacity>
+              <View>
+                <Text style={styles.modalTitle}>ফাইল ডাউনলোড</Text>
+                <Text style={styles.modalSubtitle}>যেকোনো একটি ফরম্যাট বেছে নিন</Text>
+              </View>
+              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setShowDownloadModal(false)}>
+                <Ionicons name="close" size={24} color="#AAA" />
+              </TouchableOpacity>
             </View>
+
             {downloadStep === 'selection' && (
               <View style={styles.selectionRow}>
-                <TouchableOpacity style={styles.selectBtn} onPress={() => handleDownloadInit('video')}><Ionicons name="videocam" size={30} color="#FF0000" /><Text style={styles.selectText}>ভিডিও</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.selectBtn} onPress={() => handleDownloadInit('audio')}><Ionicons name="musical-notes" size={30} color="#00BFA5" /><Text style={styles.selectText}>অডিও</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.selectCard} activeOpacity={0.8} onPress={() => handleDownloadInit('video')}>
+                  <View style={[styles.iconContainer, { backgroundColor: 'rgba(255, 68, 68, 0.15)' }]}>
+                    <Ionicons name="videocam" size={36} color="#FF4444" />
+                  </View>
+                  <Text style={styles.selectCardTitle}>ভিডিও</Text>
+                  <Text style={styles.selectCardSub}>HD কোয়ালিটি</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.selectCard} activeOpacity={0.8} onPress={() => handleDownloadInit('audio')}>
+                  <View style={[styles.iconContainer, { backgroundColor: 'rgba(0, 191, 165, 0.15)' }]}>
+                    <Ionicons name="musical-notes" size={36} color="#00BFA5" />
+                  </View>
+                  <Text style={styles.selectCardTitle}>অডিও</Text>
+                  <Text style={styles.selectCardSub}>MP3 ফরম্যাট</Text>
+                </TouchableOpacity>
               </View>
             )}
-            {downloadStep === 'fetching' && <View style={styles.loadingContainer}><ActivityIndicator size="large" color="#FF0000" /><Text style={styles.loadingText}>লিংক তৈরি হচ্ছে...</Text></View>}
+
+            {downloadStep === 'fetching' && (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={downloadType === 'audio' ? '#00BFA5' : '#FF4444'} />
+                <Text style={styles.loadingText}>সার্ভার থেকে লিংক তৈরি হচ্ছে...</Text>
+              </View>
+            )}
+
             {downloadStep === 'list' && (
-              <ScrollView style={styles.qualityList}>
-                {downloadLinks.map((item, index) => (
-                  <TouchableOpacity key={index} style={styles.qualityItem} onPress={() => handleDownloadExecute(item)}>
-                    <Text style={styles.qualityText}>{item.quality}</Text>
-                    <Ionicons name="download" size={20} color="#AAA" />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+              <View style={{ flex: 1, marginTop: 10 }}>
+                <Text style={styles.listHeaderTitle}>{downloadType === 'audio' ? 'অডিও কোয়ালিটি' : 'ভিডিও কোয়ালিটি'}</Text>
+                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.qualityListContainer}>
+                  {downloadLinks.map((item, index) => (
+                    <TouchableOpacity key={index} style={styles.qualityCard} activeOpacity={0.7} onPress={() => handleDownloadExecute(item)}>
+                      <View style={styles.qualityInfoLeft}>
+                        <Ionicons name={downloadType === 'audio' ? "musical-note" : "videocam-outline"} size={22} color={downloadType === 'audio' ? '#00BFA5' : '#FFF'} />
+                        <View style={{ marginLeft: 15 }}>
+                          <Text style={styles.qualityText}>{item.quality}</Text>
+                          <Text style={styles.qualitySubText}>{downloadType === 'audio' ? 'High Quality Audio' : 'MP4 Format'}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.downloadIconWrapper}>
+                        <Ionicons name="cloud-download" size={20} color="#00BFA5" />
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
             )}
           </View>
         </View>
@@ -351,16 +392,30 @@ const styles = StyleSheet.create({
     recTitle: { color: '#FFF', fontSize: 14 },
     recMeta: { color: '#AAA', fontSize: 11, marginTop: 4 },
     offlineTypeIndicator: { position: 'absolute', bottom: 15, left: 15, backgroundColor: 'rgba(0,0,0,0.7)', padding: 4, borderRadius: 12 },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
-    modalContent: { backgroundColor: '#1E1E1E', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: height * 0.6 },
-    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-    modalTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
-    selectionRow: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 20 },
-    selectBtn: { alignItems: 'center' },
-    selectText: { color: '#FFF', marginTop: 10, fontSize: 16 },
-    loadingContainer: { padding: 40, alignItems: 'center' },
-    loadingText: { color: '#AAA', marginTop: 15 },
-    qualityList: { marginBottom: 20 },
-    qualityItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
-    qualityText: { color: '#FFF', fontSize: 16, fontWeight: '500' }
+    
+    // [UPDATE]: ডাউনলোড মডাল / বটম শিট স্টাইলস
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+    modalContent: { backgroundColor: '#1A1A1A', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 30, maxHeight: height * 0.7, minHeight: 350 },
+    modalDragIndicator: { width: 40, height: 5, backgroundColor: '#444', borderRadius: 3, alignSelf: 'center', marginBottom: 20 },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
+    modalTitle: { color: '#FFF', fontSize: 20, fontWeight: 'bold' },
+    modalSubtitle: { color: '#888', fontSize: 13, marginTop: 3 },
+    modalCloseBtn: { padding: 6, backgroundColor: '#2A2A2A', borderRadius: 20 },
+    
+    selectionRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 10 },
+    selectCard: { backgroundColor: '#242424', borderRadius: 16, width: '47%', alignItems: 'center', paddingVertical: 30, borderWidth: 1, borderColor: '#333' },
+    iconContainer: { width: 70, height: 70, borderRadius: 35, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
+    selectCardTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+    selectCardSub: { color: '#888', fontSize: 12, marginTop: 5 },
+    
+    loadingContainer: { paddingVertical: 50, alignItems: 'center', justifyContent: 'center' },
+    loadingText: { color: '#AAA', marginTop: 20, fontSize: 15 },
+    
+    listHeaderTitle: { color: '#AAA', fontSize: 14, fontWeight: 'bold', marginBottom: 15, marginLeft: 5 },
+    qualityListContainer: { paddingBottom: 20 },
+    qualityCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#242424', padding: 16, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#333' },
+    qualityInfoLeft: { flexDirection: 'row', alignItems: 'center' },
+    qualityText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+    qualitySubText: { color: '#888', fontSize: 12, marginTop: 2 },
+    downloadIconWrapper: { backgroundColor: 'rgba(0, 191, 165, 0.1)', padding: 8, borderRadius: 12 }
 });
