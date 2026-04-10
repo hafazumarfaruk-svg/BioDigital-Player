@@ -4,7 +4,6 @@ import { Video, Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { DeviceEventEmitter } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_HEIGHT = (width * 9) / 16;
@@ -44,6 +43,12 @@ export default function GlobalPlayer() {
   const [isSwitching, setIsSwitching] = useState(false); 
 
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+
+  // [NEW]: বর্তমান কোয়ালিটি Muxed (ভিডিও+অডিও একসাথে) কিনা তা চেক করার গ্লোবাল ফাংশন
+  const checkIsMuxed = () => {
+      const currentQNum = parseInt(getNumericQuality(global.appSettings?.normalVideo || '720'));
+      return [360, 480, 720].includes(currentQNum) || streamMode === 'combined';
+  };
 
   const setBackgroundAudio = async (enable) => {
     try {
@@ -120,46 +125,54 @@ export default function GlobalPlayer() {
         await setBackgroundAudio(true); 
 
         try {
-            let currentPos = 0;
-            if (videoRef.current) {
-                const status = await videoRef.current.getStatusAsync();
-                currentPos = status.positionMillis || 0;
-                await videoRef.current.pauseAsync(); 
+            const isMuxed = checkIsMuxed();
+
+            if (isMuxed) {
+                // ৩৬০p, ৪৮০p, ৭২০p: ভিডিওটি প্লে হতে থাকবে (শুধু UI হাইড হবে)
+                if (videoRef.current) {
+                    await videoRef.current.playAsync();
+                }
+                setIsPlaying(true);
+            } else {
+                // অন্যান্য কোয়ালিটি: ভিডিও পজ করে সার্ভার থেকে অডিও ফেচ করা
+                let currentPos = 0;
+                if (videoRef.current) {
+                    const status = await videoRef.current.getStatusAsync();
+                    currentPos = status.positionMillis || 0;
+                    await videoRef.current.pauseAsync(); 
+                }
+                if (syncAudioRef.current) {
+                    await syncAudioRef.current.pauseAsync();
+                }
+
+                let targetAudioUrl = null; 
+                if (!isLocalRef.current && currentVideoIdRef.current) {
+                    try {
+                        const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${currentVideoIdRef.current}`)}&quality=240&merge=true&type=audio&t=${Date.now()}`;
+                        const res = await fetch(apiUrl);
+                        const json = await res.json();
+                        if (json.success && json.audioUrl) {
+                            targetAudioUrl = json.audioUrl;
+                        } else if (json.success && json.url) {
+                            targetAudioUrl = json.url; 
+                        }
+                    } catch(e) { console.log(`Failed to fetch pure audio`, e); }
+                }
+
+                if (!targetAudioUrl) {
+                    targetAudioUrl = audioStreamUrl || streamUrl;
+                }
+
+                const { sound } = await Audio.Sound.createAsync(
+                    { uri: targetAudioUrl },
+                    { shouldPlay: false } 
+                );
+                audioRef.current = sound;
+
+                await audioRef.current.setPositionAsync(currentPos);
+                await audioRef.current.playAsync();
+                setIsPlaying(true);
             }
-            if (syncAudioRef.current) {
-                await syncAudioRef.current.pauseAsync();
-            }
-
-            let targetAudioUrl = null; 
-
-            if (!isLocalRef.current && currentVideoIdRef.current) {
-                try {
-                    // [UPDATE]: সার্ভার থেকে শুধুমাত্র অডিও লিংক প্লে করার জন্য &type=audio যুক্ত করা হয়েছে 
-                    const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${currentVideoIdRef.current}`)}&quality=240&merge=true&type=audio&t=${Date.now()}`;
-                    const res = await fetch(apiUrl);
-                    const json = await res.json();
-                    
-                    if (json.success && json.audioUrl) {
-                        targetAudioUrl = json.audioUrl;
-                    } else if (json.success && json.url) {
-                        targetAudioUrl = json.url; 
-                    }
-                } catch(e) { console.log(`Failed to fetch pure audio`, e); }
-            }
-
-            if (!targetAudioUrl) {
-                targetAudioUrl = audioStreamUrl || streamUrl;
-            }
-
-            const { sound } = await Audio.Sound.createAsync(
-                { uri: targetAudioUrl },
-                { shouldPlay: false } 
-            );
-            audioRef.current = sound;
-
-            await audioRef.current.setPositionAsync(currentPos);
-            await audioRef.current.playAsync();
-            setIsPlaying(true);
         } catch (error) {
             console.log("Switching Error:", error);
         }
@@ -173,6 +186,17 @@ export default function GlobalPlayer() {
         await setBackgroundAudio(false); 
 
         try {
+            const isMuxed = checkIsMuxed();
+
+            if (isMuxed) {
+                // Muxed ভিডিও আগে থেকেই প্লে হচ্ছিল, তাই কিছু করতে হবে না
+                if (videoRef.current) await videoRef.current.playAsync();
+                setIsPlaying(true);
+                setIsSwitching(false);
+                return;
+            }
+
+            // অন্যান্য কোয়ালিটির ক্ষেত্রে অডিও আনলোড করে পুনরায় ভিডিও প্লে করা
             let currentPos = 0;
             if (audioRef.current) {
                 const status = await audioRef.current.getStatusAsync();
@@ -318,6 +342,10 @@ export default function GlobalPlayer() {
 
   if (playerState === 'hidden') return null;
   const isFull = playerState === 'full';
+  
+  // [FIX]: Muxed ভিডিওর জন্য Audio Mode এ থাকা অবস্থায় ভিডিও চালু রাখার ম্যাজিক লজিক
+  const isCurrentlyMuxed = [360, 480, 720].includes(parseInt(getNumericQuality(global.appSettings?.normalVideo || '720'))) || streamMode === 'combined';
+  const shouldVideoPlay = isPlaying && (!isAudioMode || isCurrentlyMuxed);
 
   return (
      <Animated.View 
@@ -335,7 +363,7 @@ export default function GlobalPlayer() {
                       ref={videoRef} 
                       source={{ uri: streamUrl }} 
                       style={styles.video} 
-                      shouldPlay={isPlaying && !isAudioMode} 
+                      shouldPlay={shouldVideoPlay} // [FIX]: আপডেট করা হলো
                       isMuted={streamMode === 'separate'} 
                       useNativeControls={isFull} 
                       resizeMode={isFull ? "contain" : "cover"} 
@@ -367,7 +395,7 @@ export default function GlobalPlayer() {
                {!isFull && (
                   <View style={[styles.overlay, isAudioMode ? {zIndex: 20} : {}]}>
                      <TouchableOpacity style={styles.miniPlayBtn} onPress={async () => {
-                         if (isAudioMode && audioRef.current) {
+                         if (isAudioMode && !isCurrentlyMuxed && audioRef.current) {
                              const status = await audioRef.current.getStatusAsync();
                              if (status?.isPlaying) { await audioRef.current.pauseAsync(); setIsPlaying(false); } 
                              else { await audioRef.current.playAsync(); setIsPlaying(true); }
