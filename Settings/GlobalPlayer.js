@@ -26,11 +26,11 @@ export default function GlobalPlayer() {
   const syncAudioRef = useRef(new Audio.Sound()); 
   
   const seekPosRef = useRef(0);
+
   const currentVideoIdRef = useRef(null);
   const isLocalRef = useRef(false);
   const isAudioModeRef = useRef(false); 
 
-  const [currentQuality, setCurrentQuality] = useState(global.appSettings?.normalVideo || '720p');
   const [playerState, setPlayerState] = useState('hidden'); 
   const [videoData, setVideoData] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
@@ -125,38 +125,41 @@ export default function GlobalPlayer() {
     }
   };
 
+  // [UPDATE]: এইখানে SettingsScreen থেকে পাঠানো সিগন্যালটি রিসিভ করা হচ্ছে। 
+  // এটি একটি স্বাধীন useEffect এ আছে যাতে কখনো ডিলিট না হয়।
   useEffect(() => {
-    const unsubscribe = navigation.addListener('state', async () => {
-      const savedQuality = global.appSettings?.normalVideo || '720p';
-      if (savedQuality !== currentQuality && currentVideoIdRef.current && !isLocalRef.current) {
-          setCurrentQuality(savedQuality); 
-          
-          let currentPos = 0;
-          if (videoRef.current) {
-              try {
-                  const status = await videoRef.current.getStatusAsync();
-                  currentPos = status.positionMillis || 0;
-                  await videoRef.current.pauseAsync();
-              } catch(e){}
-          }
+    const qualitySub = DeviceEventEmitter.addListener('qualityChanged', async (newQuality) => {
+        global.appSettings = global.appSettings || {};
+        global.appSettings.normalVideo = newQuality;
 
-          seekPosRef.current = currentPos;
-          setIsPlaying(false); 
-          setStreamUrl(null);  
-          setErrorMsg(null);
-          
-          if (audioRef.current) {
-              await audioRef.current.unloadAsync();
-              audioRef.current = null;
-          }
-          if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
-          
-          setVideoKey(Date.now().toString()); 
-          await fetchStreamUrl(currentVideoIdRef.current, savedQuality);
-      }
+        if (currentVideoIdRef.current && !isLocalRef.current) { 
+            let currentPos = 0;
+            if (videoRef.current) {
+                try {
+                    const status = await videoRef.current.getStatusAsync();
+                    currentPos = status.positionMillis || 0;
+                    await videoRef.current.pauseAsync();
+                } catch(e){}
+            }
+
+            seekPosRef.current = currentPos; 
+            setIsPlaying(false); 
+            setStreamUrl(null);  
+            setErrorMsg(null);
+            
+            if (audioRef.current) {
+                await audioRef.current.unloadAsync();
+                audioRef.current = null;
+            }
+            if (syncAudioRef.current) await syncAudioRef.current.unloadAsync();
+            
+            setVideoKey(Date.now().toString()); 
+            await fetchStreamUrl(currentVideoIdRef.current, newQuality);
+        }
     });
-    return unsubscribe;
-  }, [navigation, currentQuality]);
+
+    return () => { qualitySub.remove(); };
+  }, []);
 
   useEffect(() => {
     const switchToAudioMode = async () => {
