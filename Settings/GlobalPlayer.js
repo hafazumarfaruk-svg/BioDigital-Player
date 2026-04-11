@@ -30,9 +30,7 @@ export default function GlobalPlayer() {
   const isLocalRef = useRef(false);
   const isAudioModeRef = useRef(false); 
 
-  // [RESTORED]: আপনার আগের কোয়ালিটি স্টেট ট্র্যাকিং লজিক
   const [currentQuality, setCurrentQuality] = useState(global.appSettings?.normalVideo || '720p');
-
   const [playerState, setPlayerState] = useState('hidden'); 
   const [videoData, setVideoData] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
@@ -127,12 +125,11 @@ export default function GlobalPlayer() {
     }
   };
 
-  // [RESTORED]: হুবহু আপনার আগের PlayerScreen.js এর navigation listener লজিক!
   useEffect(() => {
     const unsubscribe = navigation.addListener('state', async () => {
       const savedQuality = global.appSettings?.normalVideo || '720p';
       if (savedQuality !== currentQuality && currentVideoIdRef.current && !isLocalRef.current) {
-          setCurrentQuality(savedQuality); // কোয়ালিটি আপডেট
+          setCurrentQuality(savedQuality); 
           
           let currentPos = 0;
           if (videoRef.current) {
@@ -283,9 +280,6 @@ export default function GlobalPlayer() {
 
       global.appSettings = global.appSettings || {};
       const targetQuality = global.appSettings.normalVideo || '720p';
-      
-      // [UPDATE]: লোকাল স্টেট আপডেট করা হচ্ছে
-      setCurrentQuality(targetQuality);
       seekPosRef.current = 0; 
       await fetchStreamUrl(data.videoId, targetQuality);
     });
@@ -445,4 +439,6 @@ const styles = StyleSheet.create({
   audioPosterContainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, backgroundColor: '#111' },
   audioPosterBg: { width: '100%', height: '100%', opacity: 0.5 },
   audioPosterOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
-  audioIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0, 191, 165, 0.1)', justifyContent: 'cen
+  audioIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0, 191, 165, 0.1)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#00BFA5', marginBottom: 10 },
+  audioPosterText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' }
+});
