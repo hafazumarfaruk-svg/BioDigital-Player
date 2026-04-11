@@ -125,8 +125,8 @@ export default function GlobalPlayer() {
     }
   };
 
+  // [UPDATE]: SettingsScreen এর সিগন্যাল ধরার জন্য আলাদা useEffect
   useEffect(() => {
-    // [UPDATE]: SettingsScreen থেকে সিগন্যাল রিসিভ করা হচ্ছে
     const qualitySub = DeviceEventEmitter.addListener('qualityChanged', async (newQuality) => {
         global.appSettings = global.appSettings || {};
         global.appSettings.normalVideo = newQuality;
@@ -141,7 +141,7 @@ export default function GlobalPlayer() {
                 } catch(e){}
             }
 
-            seekPosRef.current = currentPos; // পজিশন সেভ রাখা
+            seekPosRef.current = currentPos; 
             setIsPlaying(false); 
             setStreamUrl(null);  
             setErrorMsg(null);
