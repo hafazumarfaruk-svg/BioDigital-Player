@@ -63,7 +63,6 @@ export default function GlobalPlayer() {
     } catch (e) { console.log(e); }
   };
 
-  // [UPDATE]: কঠোর কোয়ালিটি চেকিং। লুপ মুছে ফেলা হয়েছে।
   const fetchStreamUrl = async (vidId, targetQuality) => {
     const requestedQ = getNumericQuality(targetQuality);
     setErrorMsg(null);
@@ -96,7 +95,7 @@ export default function GlobalPlayer() {
             setIsPlaying(true);
             setErrorMsg(null);
         } else {
-            setErrorMsg("This quality video is not available"); // আপনার কাঙ্ক্ষিত এরর মেসেজ
+            setErrorMsg("This quality video is not available");
         }
     } catch(e) { 
         setErrorMsg("This quality video is not available");
@@ -107,9 +106,7 @@ export default function GlobalPlayer() {
     if (status.isLoaded && seekPosRef.current > 0) {
         const pos = seekPosRef.current;
         seekPosRef.current = 0; 
-        try {
-            await videoRef.current.setPositionAsync(pos);
-        } catch(e){}
+        try { await videoRef.current.setPositionAsync(pos); } catch(e){}
     }
 
     if (streamMode === 'separate' && syncAudioRef.current && status.isLoaded && !isAudioMode) {
@@ -129,6 +126,7 @@ export default function GlobalPlayer() {
   };
 
   useEffect(() => {
+    // [UPDATE]: SettingsScreen থেকে সিগন্যাল রিসিভ করা হচ্ছে
     const qualitySub = DeviceEventEmitter.addListener('qualityChanged', async (newQuality) => {
         global.appSettings = global.appSettings || {};
         global.appSettings.normalVideo = newQuality;
@@ -143,7 +141,7 @@ export default function GlobalPlayer() {
                 } catch(e){}
             }
 
-            seekPosRef.current = currentPos;
+            seekPosRef.current = currentPos; // পজিশন সেভ রাখা
             setIsPlaying(false); 
             setStreamUrl(null);  
             setErrorMsg(null);
@@ -284,6 +282,7 @@ export default function GlobalPlayer() {
 
       global.appSettings = global.appSettings || {};
       const targetQuality = global.appSettings.normalVideo || '720p';
+      seekPosRef.current = 0; 
       await fetchStreamUrl(data.videoId, targetQuality);
     });
 
@@ -351,7 +350,6 @@ export default function GlobalPlayer() {
         <TouchableOpacity activeOpacity={0.9} style={styles.touchable} onPress={() => { if (!isFull && videoData) navigation.navigate('Player', { videoId: videoData.id, videoData }); }}>
            <View style={isFull ? styles.fullVideoWrapper : styles.miniVideoWrapper}>
                
-               {/* [UPDATE]: এরর মেসেজ দেখানোর জন্য টেক্সট যুক্ত করা হয়েছে */}
                {errorMsg ? (
                   <View style={styles.loadingBox}>
                       <Ionicons name="warning-outline" size={isFull ? 40 : 24} color="#FF4444" />
