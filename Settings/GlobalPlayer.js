@@ -13,8 +13,6 @@ const MINI_WIDTH = width * 0.45;
 const MINI_HEIGHT = (MINI_WIDTH * 9) / 16;
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
 
-const QUALITY_FALLBACK_ORDER = ['4320', '2160', '1440', '1080', '720', '480', '360', '240', '144'];
-
 const getNumericQuality = (q) => {
     if (!q || String(q).toLowerCase() === 'auto') return '720';
     const match = String(q).match(/\d+/);
@@ -65,47 +63,44 @@ export default function GlobalPlayer() {
     } catch (e) { console.log(e); }
   };
 
+  // [UPDATE]: কঠোর কোয়ালিটি চেকিং। লুপ মুছে ফেলা হয়েছে।
   const fetchStreamUrl = async (vidId, targetQuality) => {
     const requestedQ = getNumericQuality(targetQuality);
-    let startIndex = QUALITY_FALLBACK_ORDER.indexOf(requestedQ);
-    if (startIndex === -1) startIndex = 4; 
-
     setErrorMsg(null);
 
-    for (let i = startIndex; i < QUALITY_FALLBACK_ORDER.length; i++) {
-        let attemptQ = QUALITY_FALLBACK_ORDER[i];
-        try {
-            const apiUrl = `${MY_API_SERVER}/api/fast-play?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${vidId}`)}&quality=${attemptQ}&type=video`;
-            const res = await fetch(apiUrl);
-            const json = await res.json();
+    try {
+        const apiUrl = `${MY_API_SERVER}/api/fast-play?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${vidId}`)}&quality=${requestedQ}&type=video`;
+        const res = await fetch(apiUrl);
+        const json = await res.json();
 
-            if (json.success && json.url) {
-                setStreamMode(json.streamType || 'combined');
-                
-                if (json.streamType === 'separate' && json.audioUrl) {
-                    Promise.all([
-                        syncAudioRef.current.unloadAsync(),
-                        setStreamUrl(json.url),
-                        setAudioStreamUrl(json.audioUrl)
-                    ]).then(() => {
-                        syncAudioRef.current.loadAsync(
-                            { uri: json.audioUrl }, 
-                            { shouldPlay: true, positionMillis: seekPosRef.current, progressUpdateIntervalMillis: 100 } 
-                        ).catch(e => console.log(e));
-                    });
-                } else {
-                    await syncAudioRef.current.unloadAsync();
-                    setStreamUrl(json.url);
-                    setAudioStreamUrl(json.url);
-                }
-
-                setIsPlaying(true);
-                setErrorMsg(null);
-                return; 
+        if (json.success && json.url) {
+            setStreamMode(json.streamType || 'combined');
+            
+            if (json.streamType === 'separate' && json.audioUrl) {
+                Promise.all([
+                    syncAudioRef.current.unloadAsync(),
+                    setStreamUrl(json.url),
+                    setAudioStreamUrl(json.audioUrl)
+                ]).then(() => {
+                    syncAudioRef.current.loadAsync(
+                        { uri: json.audioUrl }, 
+                        { shouldPlay: true, positionMillis: seekPosRef.current, progressUpdateIntervalMillis: 100 } 
+                    ).catch(e => console.log(e));
+                });
+            } else {
+                await syncAudioRef.current.unloadAsync();
+                setStreamUrl(json.url);
+                setAudioStreamUrl(json.url);
             }
-        } catch(e) {}
+
+            setIsPlaying(true);
+            setErrorMsg(null);
+        } else {
+            setErrorMsg("This quality video is not available"); // আপনার কাঙ্ক্ষিত এরর মেসেজ
+        }
+    } catch(e) { 
+        setErrorMsg("This quality video is not available");
     }
-    setErrorMsg("কোনো কোয়ালিটিতেই ভিডিও লিংক পাওয়া যায়নি!");
   };
 
   const handlePlaybackStatusUpdate = async (status) => {
@@ -355,8 +350,15 @@ export default function GlobalPlayer() {
      >
         <TouchableOpacity activeOpacity={0.9} style={styles.touchable} onPress={() => { if (!isFull && videoData) navigation.navigate('Player', { videoId: videoData.id, videoData }); }}>
            <View style={isFull ? styles.fullVideoWrapper : styles.miniVideoWrapper}>
+               
+               {/* [UPDATE]: এরর মেসেজ দেখানোর জন্য টেক্সট যুক্ত করা হয়েছে */}
                {errorMsg ? (
-                  <View style={styles.loadingBox}><Ionicons name="warning-outline" size={isFull ? 40 : 24} color="#FF4444" /></View>
+                  <View style={styles.loadingBox}>
+                      <Ionicons name="warning-outline" size={isFull ? 40 : 24} color="#FF4444" />
+                      <Text style={{color: '#FF4444', marginTop: 10, fontSize: isFull ? 16 : 12, textAlign: 'center', paddingHorizontal: 10}}>
+                          {errorMsg}
+                      </Text>
+                  </View>
                ) : streamUrl ? (
                   <View style={{ flex: 1, display: isAudioMode ? 'none' : 'flex' }}>
                     <Video 
