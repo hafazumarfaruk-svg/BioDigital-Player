@@ -27,7 +27,6 @@ export default function GlobalPlayer() {
   const audioRef = useRef(null); 
   const syncAudioRef = useRef(new Audio.Sound()); 
   
-  // [NEW]: কোয়ালিটি চেঞ্জ করার পর একই জায়গা থেকে ভিডিও শুরু করার জন্য
   const seekPosRef = useRef(0);
 
   const currentVideoIdRef = useRef(null);
@@ -110,7 +109,6 @@ export default function GlobalPlayer() {
   };
 
   const handlePlaybackStatusUpdate = async (status) => {
-    // [FIX]: কোয়ালিটি চেঞ্জের পর ভিডিও ঠিক আগের পজিশনে টেনে আনা
     if (status.isLoaded && seekPosRef.current > 0) {
         const pos = seekPosRef.current;
         seekPosRef.current = 0; 
@@ -135,7 +133,6 @@ export default function GlobalPlayer() {
     }
   };
 
-  // [NEW]: সম্পূর্ণ আলাদা এবং সুরক্ষিত useEffect (যা কখনোই ক্র্যাশ বা ডিলিট হবে না)
   useEffect(() => {
     const qualitySub = DeviceEventEmitter.addListener('qualityChanged', async (newQuality) => {
         global.appSettings = global.appSettings || {};
@@ -168,7 +165,7 @@ export default function GlobalPlayer() {
     });
 
     return () => { qualitySub.remove(); };
-  }, []); // Empty dependency array নিশ্চিত করে যে এটি পারমানেন্ট
+  }, []);
 
   useEffect(() => {
     const switchToAudioMode = async () => {
@@ -444,4 +441,6 @@ const styles = StyleSheet.create({
   audioPosterContainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, backgroundColor: '#111' },
   audioPosterBg: { width: '100%', height: '100%', opacity: 0.5 },
   audioPosterOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
-  audioIconCircle: { width: 80, height: 80, borderRadius
+  audioIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0, 191, 165, 0.1)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#00BFA5', marginBottom: 10 },
+  audioPosterText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' }
+});
