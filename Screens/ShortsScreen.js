@@ -39,6 +39,25 @@ export default function ShortsScreen({ initialVideoId, route }) {
     setShortsLoading(true);
     setShowUnmuteBtn(false);
     
+    // [NEW]: ক্যাশ ক্লিনআপ চেকার (টাইম অনুযায়ী)
+    const checkAndClearCache = async () => {
+      try {
+        const cacheLimit = global.appSettings?.shortsCacheLimit || 3600000; // ডিফল্ট ১ ঘণ্টা
+        const lastClearTime = await AsyncStorage.getItem('lastShortsCacheClear');
+        const now = Date.now();
+
+        if (!lastClearTime) {
+          await AsyncStorage.setItem('lastShortsCacheClear', now.toString());
+        } else if (now - parseInt(lastClearTime) > cacheLimit) {
+          if (shortsWebViewRef.current) {
+            shortsWebViewRef.current.clearCache(true); // মেমোরি থেকে মুছে ফেলা
+            await AsyncStorage.setItem('lastShortsCacheClear', now.toString());
+          }
+        }
+      } catch (e) {}
+    };
+    checkAndClearCache();
+
     const timerLoading = setTimeout(() => setShortsLoading(false), 2000);
     const timerUnmute = setTimeout(() => setShowUnmuteBtn(true), 10000); 
     
@@ -258,6 +277,16 @@ export default function ShortsScreen({ initialVideoId, route }) {
         onMessage={onShortsMessage} 
         onLoadEnd={() => setShortsLoading(false)} 
         javaScriptEnabled={true} 
+        
+        // [NEW]: সার্ভার ছাড়াই অফলাইন ক্যাশিং অ্যালাউ করা হলো
+        cacheEnabled={true}
+        cacheMode="LOAD_CACHE_ELSE_NETWORK"
+        domStorageEnabled={true}
+        thirdPartyCookiesEnabled={true}
+        allowFileAccess={true}
+        allowFileAccessFromFileURLs={true}
+        allowUniversalAccessFromFileURLs={true}
+
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
         containerStyle={{ flex: 1 }} 
       />
