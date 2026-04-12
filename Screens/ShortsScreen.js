@@ -5,10 +5,11 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { Video } from 'expo-av';
-import * as FileSystem from 'expo-file-system'; // [NEW]: লোকাল ক্যাশিংয়ের জন্য
+import * as FileSystem from 'expo-file-system'; 
 
 const { width, height } = Dimensions.get('window');
 const STABLE_USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36";
+const MY_API_SERVER = "http://127.0.0.1:10000"; 
 
 export default function ShortsScreen({ initialVideoId, route }) {
   const navigation = useNavigation();
@@ -27,9 +28,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
   const currentChannelNameRef = useRef(''); 
   const shortsWebViewRef = useRef(null);
 
-  // [NEW]: অফলাইন প্লেয়ারের স্টেট
   const [isOffline, setIsOffline] = useState(false);
   const [cachedShorts, setCachedShorts] = useState([]);
+  const [visibleIndex, setVisibleIndex] = useState(0); 
 
   const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
 
@@ -41,10 +42,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
     }, 15000); 
   };
 
-  // [NEW]: ক্যাশ ক্লিনআপ এবং লোড করার লজিক
   const checkAndLoadCache = async () => {
     try {
-      const cacheLimit = global.appSettings?.shortsCacheLimit || 3600000; // ডিফল্ট ১ ঘণ্টা
+      const cacheLimit = global.appSettings?.shortsCacheLimit || 3600000; 
       const now = Date.now();
       let saved = await AsyncStorage.getItem('cached_shorts');
       
@@ -84,9 +84,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
       clearTimeout(timerUnmute); 
       if (subscribeTimerRef.current) clearTimeout(subscribeTimerRef.current);
     };
-  }, [targetUri, isFocused]);
-
-  const handleNativeSubscribe = async () => {
+  }, [targetUri, isFocused]);const handleNativeSubscribe = async () => {
     let channelNameToSave = currentChannel.name;
     if (!channelNameToSave || channelNameToSave === 'Unknown Channel' || channelNameToSave === 'Loading...') return; 
 
@@ -196,24 +194,19 @@ export default function ShortsScreen({ initialVideoId, route }) {
                     }
                 }
 
-                // [NEW]: সরাসরি ডিরেক্ট লিংক পেলে মেমোরিতে ক্যাশ করার নির্দেশ পাঠানো হচ্ছে
-                if (vid && vid.src && vid.src.startsWith('http')) {
-                    if (!window.cachedUrls) window.cachedUrls = {};
-                    if (!window.cachedUrls[vid.src]) {
-                        window.cachedUrls[vid.src] = true;
-                        window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                            type: 'CACHE_VIDEO', 
-                            url: vid.src, 
-                            channel: channelName 
-                        }));
-                    }
+                let vId = "";
+                const match = window.location.href.match(/\\/shorts\\/([a-zA-Z0-9_-]+)/);
+                if(match && match[1]) {
+                    vId = match[1];
                 }
 
                 if (uniqueId && uniqueId !== activeVideoId) {
                     activeVideoId = uniqueId;
                     window.ReactNativeWebView.postMessage(JSON.stringify({ 
                         type: 'NEW_VIDEO_STARTED',
-                        url: window.location.href
+                        url: window.location.href,
+                        videoId: vId,
+                        channel: channelName
                     }));
                 }
 
@@ -263,6 +256,38 @@ export default function ShortsScreen({ initialVideoId, route }) {
     } catch(e){}
   };
 
+  const fetchDirectUrlAndCache = async (vId, channel) => {
+    try {
+        if (cachedShorts.some(c => c.videoId === vId)) return; 
+
+        const apiUrl = `${MY_API_SERVER}/api/fast-play?url=https://www.youtube.com/watch?v=${vId}&quality=360&type=video`;
+        const res = await fetch(apiUrl);
+        const json = await res.json();
+
+        if (json.success && json.url) {
+            const fileName = `short_${vId}.mp4`;
+            const fileUri = FileSystem.cacheDirectory + fileName;
+
+            const fileInfo = await FileSystem.getInfoAsync(fileUri);
+            if (!fileInfo.exists) {
+                const dl = await FileSystem.downloadAsync(json.url, fileUri);
+                if (dl.status === 200) {
+                    const newShort = { id: vId, videoId: vId, uri: dl.uri, channel: channel, timestamp: Date.now() };
+                    setCachedShorts(prev => {
+                        const updated = [newShort, ...prev];
+                        if(updated.length > 20) { 
+                            const removed = updated.pop();
+                            FileSystem.deleteAsync(removed.uri, {idempotent: true}).catch(()=>{});
+                        }
+                        AsyncStorage.setItem('cached_shorts', JSON.stringify(updated));
+                        return updated;
+                    });
+                }
+            }
+        }
+    } catch(e) {}
+  };
+
   const onShortsMessage = async (event) => {
     const rawData = event.nativeEvent.data;
     if (rawData === "SKIP_START") setIsAutoSkipping(true);
@@ -271,25 +296,11 @@ export default function ShortsScreen({ initialVideoId, route }) {
         try {
           const data = JSON.parse(rawData);
           
-          // [NEW]: WebView থেকে ক্যাশ করার রিকোয়েস্ট রিসিভ করা
-          if (data.type === 'CACHE_VIDEO' && data.url) {
-            if (cachedShorts.length < 20) { // মেমোরি বাঁচাতে সর্বোচ্চ ২০টি সেভ হবে
-                const fileName = `short_${Date.now()}.mp4`;
-                const fileUri = FileSystem.cacheDirectory + fileName;
-                
-                FileSystem.downloadAsync(data.url, fileUri).then(async ({ uri }) => {
-                    const newShort = { id: Date.now().toString(), uri, channel: data.channel, timestamp: Date.now() };
-                    setCachedShorts(prev => {
-                        const updated = [newShort, ...prev];
-                        AsyncStorage.setItem('cached_shorts', JSON.stringify(updated));
-                        return updated;
-                    });
-                }).catch(e => {});
-            }
-          }
-
           if (data.type === 'NEW_VIDEO_STARTED') {
               if (data.url) setCurrentUrl(data.url); 
+              if (data.videoId) {
+                  fetchDirectUrlAndCache(data.videoId, data.channel);
+              }
           }
           
           if (data.type === 'CHANNEL_SYNC' && data.name) {
@@ -313,8 +324,12 @@ export default function ShortsScreen({ initialVideoId, route }) {
     return true;
   };
 
-  // [NEW]: অফলাইন মোডের UI রেন্ডার (WebView এরর হাইড করে)
-  if (isOffline) {
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+    if (viewableItems.length > 0) {
+        setVisibleIndex(viewableItems[0].index);
+    }
+  }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;if (isOffline) {
       return (
           <SafeAreaView style={styles.container}>
               <View style={styles.offlineHeader}>
@@ -330,12 +345,14 @@ export default function ShortsScreen({ initialVideoId, route }) {
                       keyExtractor={item => item.id}
                       pagingEnabled
                       showsVerticalScrollIndicator={false}
-                      renderItem={({item}) => (
+                      onViewableItemsChanged={onViewableItemsChanged}
+                      viewabilityConfig={viewabilityConfig}
+                      renderItem={({item, index}) => (
                           <View style={{ width: width, height: height }}>
                               <Video 
                                   source={{ uri: item.uri }} 
                                   style={StyleSheet.absoluteFill} 
-                                  shouldPlay 
+                                  shouldPlay={index === visibleIndex} 
                                   isLooping 
                                   resizeMode="cover" 
                               />
@@ -374,7 +391,6 @@ export default function ShortsScreen({ initialVideoId, route }) {
         onLoadEnd={() => setShortsLoading(false)} 
         javaScriptEnabled={true} 
 
-        // [NEW]: গুগলের ইন্টারনেট এরর পেজটিকে ধরে অফলাইন মোড চালু করা
         onError={(e) => {
             if (e.nativeEvent.code === -2 || String(e.nativeEvent.description).includes('DISCONNECTED')) {
                 setIsOffline(true);
@@ -454,7 +470,6 @@ const styles = StyleSheet.create({
   nativeShareText: { color: '#FFF', fontWeight: 'bold', fontSize: 13, marginLeft: 6 },
   unmuteBadge: { position: 'absolute', top: 50, right: 15, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 0, 0, 0.8)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', zIndex: 99999 },
 
-  // [NEW]: অফলাইন স্ক্রিনের স্টাইল
   offlineHeader: { flexDirection: 'row', alignItems: 'center', padding: 15, position: 'absolute', top: 0, zIndex: 10, width: '100%', backgroundColor: 'rgba(0,0,0,0.4)' },
   headerIconBtn: { paddingRight: 10 },
   offlineHeaderText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
