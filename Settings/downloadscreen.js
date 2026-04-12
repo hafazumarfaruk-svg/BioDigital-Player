@@ -13,7 +13,13 @@ export default function DownloadScreen({ navigation }) {
   const loadDownloads = async () => {
     try {
       const data = await AsyncStorage.getItem('recorded_downloads');
-      if (data) setDownloads(JSON.parse(data));
+      if (data) {
+          let parsed = JSON.parse(data);
+          // [FIX]: মেমোরিতে জমে থাকা ফাঁকা/এরর ডাউনলোডগুলো অটোমেটিক মুছে ফেলা হচ্ছে
+          parsed = parsed.filter(item => item && item.id && item.title);
+          setDownloads(parsed);
+          await AsyncStorage.setItem('recorded_downloads', JSON.stringify(parsed));
+      }
     } catch (e) { console.error(e); }
   };
 
@@ -36,13 +42,19 @@ export default function DownloadScreen({ navigation }) {
                     const activeItem = active[id];
                     const existsIndex = updatedList.findIndex(d => d.id === id);
 
-                    // [FIX]: নতুন ডাউনলোড শুরু হলে লিস্টে যুক্ত করা হচ্ছে
                     if (existsIndex === -1 && activeItem.status !== 'error') {
+                        // [FIX]: আইডি নিশ্চিতভাবে বসানো হলো
                         updatedList.unshift({
-                            id: activeItem.id, videoId: activeItem.videoId, title: activeItem.title, 
-                            thumbnail: activeItem.thumbnail, quality: activeItem.quality, type: activeItem.type, 
-                            date: activeItem.date, progress: activeItem.progress, 
-                            isCompleted: activeItem.status === 'completed', localUri: activeItem.localUrl || null
+                            id: id, 
+                            videoId: activeItem.videoId, 
+                            title: activeItem.title || 'Downloading...', 
+                            thumbnail: activeItem.thumbnail, 
+                            quality: activeItem.quality, 
+                            type: activeItem.type, 
+                            date: activeItem.date, 
+                            progress: activeItem.progress, 
+                            isCompleted: activeItem.status === 'completed', 
+                            localUri: activeItem.localUrl || null
                         });
                         needsSave = true;
                     } else if (existsIndex !== -1) {
