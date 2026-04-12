@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions, PanResponder, Share } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions, PanResponder, Share, FlatList, SafeAreaView } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
+import { Video } from 'expo-av';
+import * as FileSystem from 'expo-file-system'; // [NEW]: লোকাল ক্যাশিংয়ের জন্য
 
 const { width, height } = Dimensions.get('window');
 const STABLE_USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36";
@@ -25,6 +27,10 @@ export default function ShortsScreen({ initialVideoId, route }) {
   const currentChannelNameRef = useRef(''); 
   const shortsWebViewRef = useRef(null);
 
+  // [NEW]: অফলাইন প্লেয়ারের স্টেট
+  const [isOffline, setIsOffline] = useState(false);
+  const [cachedShorts, setCachedShorts] = useState([]);
+
   const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
 
   const restartActionTimer = () => {
@@ -35,28 +41,38 @@ export default function ShortsScreen({ initialVideoId, route }) {
     }, 15000); 
   };
 
+  // [NEW]: ক্যাশ ক্লিনআপ এবং লোড করার লজিক
+  const checkAndLoadCache = async () => {
+    try {
+      const cacheLimit = global.appSettings?.shortsCacheLimit || 3600000; // ডিফল্ট ১ ঘণ্টা
+      const now = Date.now();
+      let saved = await AsyncStorage.getItem('cached_shorts');
+      
+      if (saved) {
+        let parsed = JSON.parse(saved);
+        const validItems = [];
+        
+        for (const item of parsed) {
+          if (now - item.timestamp > cacheLimit) {
+            try { await FileSystem.deleteAsync(item.uri, { idempotent: true }); } catch(e) {}
+          } else {
+            validItems.push(item);
+          }
+        }
+        
+        setCachedShorts(validItems);
+        if (validItems.length !== parsed.length) {
+          await AsyncStorage.setItem('cached_shorts', JSON.stringify(validItems));
+        }
+      }
+    } catch (e) {}
+  };
+
   useEffect(() => {
     setShortsLoading(true);
     setShowUnmuteBtn(false);
     
-    // [NEW]: ক্যাশ ক্লিনআপ চেকার (টাইম অনুযায়ী)
-    const checkAndClearCache = async () => {
-      try {
-        const cacheLimit = global.appSettings?.shortsCacheLimit || 3600000; // ডিফল্ট ১ ঘণ্টা
-        const lastClearTime = await AsyncStorage.getItem('lastShortsCacheClear');
-        const now = Date.now();
-
-        if (!lastClearTime) {
-          await AsyncStorage.setItem('lastShortsCacheClear', now.toString());
-        } else if (now - parseInt(lastClearTime) > cacheLimit) {
-          if (shortsWebViewRef.current) {
-            shortsWebViewRef.current.clearCache(true); // মেমোরি থেকে মুছে ফেলা
-            await AsyncStorage.setItem('lastShortsCacheClear', now.toString());
-          }
-        }
-      } catch (e) {}
-    };
-    checkAndClearCache();
+    checkAndLoadCache();
 
     const timerLoading = setTimeout(() => setShortsLoading(false), 2000);
     const timerUnmute = setTimeout(() => setShowUnmuteBtn(true), 10000); 
@@ -68,7 +84,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
       clearTimeout(timerUnmute); 
       if (subscribeTimerRef.current) clearTimeout(subscribeTimerRef.current);
     };
-  }, [targetUri]);
+  }, [targetUri, isFocused]);
 
   const handleNativeSubscribe = async () => {
     let channelNameToSave = currentChannel.name;
@@ -180,6 +196,19 @@ export default function ShortsScreen({ initialVideoId, route }) {
                     }
                 }
 
+                // [NEW]: সরাসরি ডিরেক্ট লিংক পেলে মেমোরিতে ক্যাশ করার নির্দেশ পাঠানো হচ্ছে
+                if (vid && vid.src && vid.src.startsWith('http')) {
+                    if (!window.cachedUrls) window.cachedUrls = {};
+                    if (!window.cachedUrls[vid.src]) {
+                        window.cachedUrls[vid.src] = true;
+                        window.ReactNativeWebView.postMessage(JSON.stringify({ 
+                            type: 'CACHE_VIDEO', 
+                            url: vid.src, 
+                            channel: channelName 
+                        }));
+                    }
+                }
+
                 if (uniqueId && uniqueId !== activeVideoId) {
                     activeVideoId = uniqueId;
                     window.ReactNativeWebView.postMessage(JSON.stringify({ 
@@ -242,6 +271,23 @@ export default function ShortsScreen({ initialVideoId, route }) {
         try {
           const data = JSON.parse(rawData);
           
+          // [NEW]: WebView থেকে ক্যাশ করার রিকোয়েস্ট রিসিভ করা
+          if (data.type === 'CACHE_VIDEO' && data.url) {
+            if (cachedShorts.length < 20) { // মেমোরি বাঁচাতে সর্বোচ্চ ২০টি সেভ হবে
+                const fileName = `short_${Date.now()}.mp4`;
+                const fileUri = FileSystem.cacheDirectory + fileName;
+                
+                FileSystem.downloadAsync(data.url, fileUri).then(async ({ uri }) => {
+                    const newShort = { id: Date.now().toString(), uri, channel: data.channel, timestamp: Date.now() };
+                    setCachedShorts(prev => {
+                        const updated = [newShort, ...prev];
+                        AsyncStorage.setItem('cached_shorts', JSON.stringify(updated));
+                        return updated;
+                    });
+                }).catch(e => {});
+            }
+          }
+
           if (data.type === 'NEW_VIDEO_STARTED') {
               if (data.url) setCurrentUrl(data.url); 
           }
@@ -267,6 +313,56 @@ export default function ShortsScreen({ initialVideoId, route }) {
     return true;
   };
 
+  // [NEW]: অফলাইন মোডের UI রেন্ডার (WebView এরর হাইড করে)
+  if (isOffline) {
+      return (
+          <SafeAreaView style={styles.container}>
+              <View style={styles.offlineHeader}>
+                  <TouchableOpacity onPress={() => { setIsOffline(false); navigation.goBack(); }} style={styles.headerIconBtn}>
+                      <Ionicons name="arrow-back" size={28} color="#FFF" />
+                  </TouchableOpacity>
+                  <Text style={styles.offlineHeaderText}>Offline Shorts</Text>
+              </View>
+
+              {cachedShorts.length > 0 ? (
+                  <FlatList
+                      data={cachedShorts}
+                      keyExtractor={item => item.id}
+                      pagingEnabled
+                      showsVerticalScrollIndicator={false}
+                      renderItem={({item}) => (
+                          <View style={{ width: width, height: height }}>
+                              <Video 
+                                  source={{ uri: item.uri }} 
+                                  style={StyleSheet.absoluteFill} 
+                                  shouldPlay 
+                                  isLooping 
+                                  resizeMode="cover" 
+                              />
+                              <View style={styles.offlineActionRow}>
+                                  <Text style={styles.offlineChannelName}>@{item.channel || 'Shorts'}</Text>
+                                  <View style={styles.offlineBadge}>
+                                      <Ionicons name="cloud-offline" size={14} color="#FFF" />
+                                      <Text style={styles.offlineBadgeText}>Cached Video</Text>
+                                  </View>
+                              </View>
+                          </View>
+                      )}
+                  />
+              ) : (
+                  <View style={styles.offlineEmpty}>
+                      <Ionicons name="wifi-outline" size={80} color="#444" />
+                      <Text style={styles.offlineEmptyText}>আপনি এখন অফলাইনে আছেন</Text>
+                      <Text style={styles.offlineEmptySub}>ইন্টারনেট সংযোগ চালু করে আবার চেষ্টা করুন</Text>
+                      <TouchableOpacity style={styles.retryBtn} onPress={() => setIsOffline(false)}>
+                          <Text style={styles.retryText}>রিলোড করুন</Text>
+                      </TouchableOpacity>
+                  </View>
+              )}
+          </SafeAreaView>
+      );
+  }
+
   return (
     <View style={styles.container}>
       <WebView
@@ -277,16 +373,17 @@ export default function ShortsScreen({ initialVideoId, route }) {
         onMessage={onShortsMessage} 
         onLoadEnd={() => setShortsLoading(false)} 
         javaScriptEnabled={true} 
-        
-        // [NEW]: সার্ভার ছাড়াই অফলাইন ক্যাশিং অ্যালাউ করা হলো
+
+        // [NEW]: গুগলের ইন্টারনেট এরর পেজটিকে ধরে অফলাইন মোড চালু করা
+        onError={(e) => {
+            if (e.nativeEvent.code === -2 || String(e.nativeEvent.description).includes('DISCONNECTED')) {
+                setIsOffline(true);
+            }
+        }}
+
         cacheEnabled={true}
         cacheMode="LOAD_CACHE_ELSE_NETWORK"
         domStorageEnabled={true}
-        thirdPartyCookiesEnabled={true}
-        allowFileAccess={true}
-        allowFileAccessFromFileURLs={true}
-        allowUniversalAccessFromFileURLs={true}
-
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
         containerStyle={{ flex: 1 }} 
       />
@@ -355,5 +452,19 @@ const styles = StyleSheet.create({
   nativeSubbedText: { color: '#AAA' },
   nativeShareBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 15, paddingVertical: 10, borderRadius: 25, marginLeft: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   nativeShareText: { color: '#FFF', fontWeight: 'bold', fontSize: 13, marginLeft: 6 },
-  unmuteBadge: { position: 'absolute', top: 50, right: 15, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 0, 0, 0.8)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', zIndex: 99999 }
+  unmuteBadge: { position: 'absolute', top: 50, right: 15, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 0, 0, 0.8)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', zIndex: 99999 },
+
+  // [NEW]: অফলাইন স্ক্রিনের স্টাইল
+  offlineHeader: { flexDirection: 'row', alignItems: 'center', padding: 15, position: 'absolute', top: 0, zIndex: 10, width: '100%', backgroundColor: 'rgba(0,0,0,0.4)' },
+  headerIconBtn: { paddingRight: 10 },
+  offlineHeaderText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+  offlineActionRow: { position: 'absolute', bottom: 100, left: 15 },
+  offlineChannelName: { color: '#FFF', fontSize: 18, fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3 },
+  offlineBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,191,165,0.8)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginTop: 8, alignSelf: 'flex-start' },
+  offlineBadgeText: { color: '#FFF', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
+  offlineEmpty: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0F0F' },
+  offlineEmptyText: { color: '#FFF', fontSize: 20, fontWeight: 'bold', marginTop: 15 },
+  offlineEmptySub: { color: '#888', fontSize: 14, marginTop: 5, marginBottom: 20 },
+  retryBtn: { backgroundColor: '#00BFA5', paddingHorizontal: 25, paddingVertical: 12, borderRadius: 25 },
+  retryText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 }
 });
