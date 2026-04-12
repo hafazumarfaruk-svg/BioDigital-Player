@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions, PanResponder, Share, FlatList, SafeAreaView } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation, useIsFocused } from '@react-navigation/native';
+import { useNavigation, useIsFocused, useFocusEffect } from '@react-navigation/native';
 import { Video } from 'expo-av';
 import * as FileSystem from 'expo-file-system'; 
 
@@ -53,10 +53,15 @@ export default function ShortsScreen({ initialVideoId, route }) {
         const validItems = [];
         
         for (const item of parsed) {
-          if (now - item.timestamp > cacheLimit) {
-            try { await FileSystem.deleteAsync(item.uri, { idempotent: true }); } catch(e) {}
-          } else {
-            validItems.push(item);
+          const fileInfo = await FileSystem.getInfoAsync(item.uri);
+          
+          if (fileInfo.exists) {
+            if (now - item.timestamp > cacheLimit) {
+              try { await FileSystem.deleteAsync(item.uri, { idempotent: true }); } catch(e) {}
+            } else {
+              const finalUri = item.uri.startsWith('file://') ? item.uri : `file://${item.uri}`;
+              validItems.push({ ...item, uri: finalUri });
+            }
           }
         }
         
@@ -65,8 +70,18 @@ export default function ShortsScreen({ initialVideoId, route }) {
           await AsyncStorage.setItem('cached_shorts', JSON.stringify(validItems));
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.log("Cache Load Error:", e);
+    }
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isOffline) {
+        checkAndLoadCache();
+      }
+    }, [isOffline])
+  );
 
   useEffect(() => {
     setShortsLoading(true);
@@ -84,7 +99,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
       clearTimeout(timerUnmute); 
       if (subscribeTimerRef.current) clearTimeout(subscribeTimerRef.current);
     };
-  }, [targetUri, isFocused]);const handleNativeSubscribe = async () => {
+  }, [targetUri, isFocused]);
+
+  const handleNativeSubscribe = async () => {
     let channelNameToSave = currentChannel.name;
     if (!channelNameToSave || channelNameToSave === 'Unknown Channel' || channelNameToSave === 'Loading...') return; 
 
@@ -147,9 +164,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
         }
       }
     })
-  ).current;
-
-  const shortsInjectScript = `
+  ).current;const shortsInjectScript = `
     (function() {
         const style = document.createElement('style');
         style.innerHTML = \`
@@ -258,7 +273,12 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const fetchDirectUrlAndCache = async (vId, channel) => {
     try {
-        if (cachedShorts.some(c => c.videoId === vId)) return; 
+        if (!vId) return;
+        
+        let saved = await AsyncStorage.getItem('cached_shorts');
+        let parsed = saved ? JSON.parse(saved) : [];
+        
+        if (parsed.some(c => c.videoId === vId)) return; 
 
         const apiUrl = `${MY_API_SERVER}/api/fast-play?url=https://www.youtube.com/watch?v=${vId}&quality=360&type=video`;
         const res = await fetch(apiUrl);
@@ -273,19 +293,21 @@ export default function ShortsScreen({ initialVideoId, route }) {
                 const dl = await FileSystem.downloadAsync(json.url, fileUri);
                 if (dl.status === 200) {
                     const newShort = { id: vId, videoId: vId, uri: dl.uri, channel: channel, timestamp: Date.now() };
-                    setCachedShorts(prev => {
-                        const updated = [newShort, ...prev];
-                        if(updated.length > 20) { 
-                            const removed = updated.pop();
-                            FileSystem.deleteAsync(removed.uri, {idempotent: true}).catch(()=>{});
-                        }
-                        AsyncStorage.setItem('cached_shorts', JSON.stringify(updated));
-                        return updated;
-                    });
+                    
+                    parsed.unshift(newShort);
+                    if(parsed.length > 20) { 
+                        const removed = parsed.pop();
+                        FileSystem.deleteAsync(removed.uri, {idempotent: true}).catch(()=>{});
+                    }
+                    
+                    await AsyncStorage.setItem('cached_shorts', JSON.stringify(parsed));
+                    setCachedShorts(parsed);
                 }
             }
         }
-    } catch(e) {}
+    } catch(e) {
+        console.log("Caching Error:", e);
+    }
   };
 
   const onShortsMessage = async (event) => {
@@ -352,9 +374,10 @@ export default function ShortsScreen({ initialVideoId, route }) {
                               <Video 
                                   source={{ uri: item.uri }} 
                                   style={StyleSheet.absoluteFill} 
-                                  shouldPlay={index === visibleIndex} 
+                                  shouldPlay={index === visibleIndex && isFocused} 
                                   isLooping 
                                   resizeMode="cover" 
+                                  useNativeControls={false}
                               />
                               <View style={styles.offlineActionRow}>
                                   <Text style={styles.offlineChannelName}>@{item.channel || 'Shorts'}</Text>
@@ -371,7 +394,10 @@ export default function ShortsScreen({ initialVideoId, route }) {
                       <Ionicons name="wifi-outline" size={80} color="#444" />
                       <Text style={styles.offlineEmptyText}>আপনি এখন অফলাইনে আছেন</Text>
                       <Text style={styles.offlineEmptySub}>ইন্টারনেট সংযোগ চালু করে আবার চেষ্টা করুন</Text>
-                      <TouchableOpacity style={styles.retryBtn} onPress={() => setIsOffline(false)}>
+                      <TouchableOpacity style={styles.retryBtn} onPress={() => {
+                          checkAndLoadCache();
+                          setIsOffline(false);
+                      }}>
                           <Text style={styles.retryText}>রিলোড করুন</Text>
                       </TouchableOpacity>
                   </View>
@@ -394,6 +420,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
         onError={(e) => {
             if (e.nativeEvent.code === -2 || String(e.nativeEvent.description).includes('DISCONNECTED')) {
                 setIsOffline(true);
+                checkAndLoadCache(); 
             }
         }}
 
