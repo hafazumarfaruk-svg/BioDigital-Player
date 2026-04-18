@@ -164,7 +164,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
         }
       }
     })
-  ).current;const shortsInjectScript = `
+  ).current;
+
+  const shortsInjectScript = `
     (function() {
         const style = document.createElement('style');
         style.innerHTML = \`
@@ -280,7 +282,394 @@ export default function ShortsScreen({ initialVideoId, route }) {
         
         if (parsed.some(c => c.videoId === vId)) return; 
 
-        const apiUrl = `${MY_API_SERVER}/api/fast-play?url=https://www.youtube.com/watch?v=${vId}&quality=360&type=video`;
+        // [FIXED]: সার্ভারের অরিজিনাল /api/extract রাউটটি ব্যবহার করা হচ্ছে ক্যাশিংয়ের জন্য
+        const apiUrl = `${MY_API_SERVER}/api/extract?url=https://www.youtube.com/watch?v=${vId}&quality=360`;
+        const res = await fetch(apiUrl);
+        const json = await res.json();
+
+        if (json.success && json.url) {
+            const fileName = `short_${vId}.mp4`;
+            const fileUri = FileSystem.cacheDirectory + fileName;
+
+            const fileInfo = await FileSystem.getInfoAsync(fileUri);
+            if (!fileInfo.exists) {
+                const dl = await FileSystem.downloadAsync(json.url, fileUri);
+                if (dl.status === 200) {
+                    const newShort = { id: vId, videoId: vId, uri: dl.uri, channel: channel, timestamp: Date.now() };
+                    
+                    parsed.unshift(newShort);
+                    if(parsed.length > 20) { 
+                        const removed = parsed.pop();
+                        FileSystem.deleteAsync(removed.uri, {idempotent: true}).catch(()=>{});
+                    }
+                    
+                    await AsyncStorage.setItem('cached_shorts', JSON.stringify(parsed));
+                    setCachedShorts(parsed);
+                }
+            }
+        }
+    } catch(e) {
+        console.log("Caching Error:", e);
+    }
+  };
+
+  const onShortsMessage = async (event) => {
+    const rawData = event.nativeEvent.data;
+    if (rawData === "SKIP_START") setIsAutoSkipping(true);
+    else if (rawData === "SKIP_END") setIsAutoSkipping(false);
+    else {
+        try {
+          const data = JSON.parse(rawData);
+          
+          if (data.type === 'NEW_VIDEO_STARTED') {
+              if (data.url) setCurrentUrl(data.url); 
+              if (data.videoId) {
+                  fetchDirectUrlAndCache(data.videoId, data.channel);
+              }
+          }
+          
+          if (data.type === 'CHANNEL_SYNC' && data.name) {
+              if (currentChannelNameRef.current !== data.name) {
+                  currentChannelNameRef.current = data.name;
+                  checkSubscription(data.name);
+              }
+          }
+        } catch (e) {}
+    }
+  };
+
+  const handleShouldStartLoadWithRequest = (request) => {
+    const url = request.url;
+    if (url.includes('youtube.com/@') || url.includes('/channel/') || url.includes('/c/')) {
+      let extractedName = 'YouTube Channel';
+      if (url.includes('/@')) extractedName = '@' + url.split('/@')[1].split('/')[0].split('?')[0];
+      navigation.navigate('Channel', { channelName: extractedName });
+      return false; 
+    }
+    return true;
+  };
+
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+    if (viewableItems.length > 0) {
+        setVisibleIndex(viewableItems[0].index);
+    }
+  }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+
+  if (isOffline) {
+      return (
+          <SafeAreaView style={styles.container}>
+              <View style={styles.offlineHeader}>
+                  <TouchableOpacity onPress={() => { setIsOffline(false); navigation.goBack(); }} style={styles.headerIconBtn}>
+                      <Ionicons name="arrow-back" size={28} color="#FFF" />
+                  </TouchableOpacity>
+                  <Text style={styles.offlineHeaderText}>Offline Shorts</Text>
+              </View>
+
+              {cachedShorts.length > 0 ? (
+                  <FlatList
+                      data={cachedShorts}
+                      keyExtractor={item => item.id}
+                      pagingEnabled
+                      showsVerticalScrollIndicator={false}
+                      onViewableItemsChanged={onViewableItemsChanged}
+                      viewabilityConfig={viewabilityConfig}
+                      renderItem={({item, index}) => (
+                          <View style={{ width: width, height: height }}>
+                              <Video 
+                                  source={{ uri: item.uri }} 
+                                  style={StyleSheet.absoluteFill} 
+                                  shouldPlay={index === visibleIndex && isFocused} 
+                                  isLooping 
+                                  resizeMode="cover" 
+                                  useNativeControls={false}
+                              />
+                              <View style={styles.offlineActionRow}>
+                                  <Text style={styles.offlineChannelName}>@{item.channel || 'Shorts'}</Text>
+                                  <View style={styles.offlineBadge}>
+                                      <Ionicons name="cloud-offline" size={14} color="#FFF" />
+                                      <Text style={styles.offlineBadgeText}>Cached Video</Text>
+                                  </View>
+                              </View>
+                          </View>
+                      )}
+                  />
+              ) : (
+                  <View style={styles.offlineEmpty}>
+                      <Ionicons name="wifi-outline" size={80} color="#444" />
+                      <Text style={styles.offlineEmptyText}>আপনি এখন অফলাইনে আছেন</Text>
+                      <Text style={styles.offlineEmptySub}>ইন্টারনেট সংযোগ চালু করে আবার চেষ্টা করুন</Text>
+                      <TouchableOpacity style={styles.retryBtn} onPress={() => {
+                          checkAndLoadCache();
+                          setIsOffline(false);
+                      }}>
+                          <Text style={styles.retryText}>রিলোড করুন</Text>
+                      </TouchableOpacity>
+                  </View>
+              )}
+          </SafeAreaView>
+      );
+  }
+
+  return (
+    <View style={styles.container}>
+      <WebView
+        ref={shortsWebViewRef} 
+        source={{ uri: targetUri }} 
+        userAgent={STABLE_USER_AGENT} 
+        injectedJavaScript={shortsInjectScript} 
+        onMessage={onShortsMessage} 
+        onLoadEnd={() => setShortsLoading(false)} 
+        javaScriptEnabled={true} 
+
+        onError={(e) => {
+            if (e.nativeEvent.code === -2 || String(e.nativeEvent.description).includes('DISCONNECTED')) {
+                setIsOffline(true);
+                checkAndLoadCache(); 
+            }
+        }}
+
+        cacheEnabled={true}
+        cacheMode="LOAD_CACHE_ELSE_NETWORK"
+        domStorageEnabled={true}
+        onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
+        containerStyle={{ flex: 1 }} 
+      />
+      
+      <View style={styles.bottomLayer} {...panResponder.panHandlers} />
+      <View style={styles.rightMiddleLayer} {...panResponder.panHandlers} />
+      <View style={styles.topRightLayer} {...panResponder.panHandlers} />
+      <View style={styles.topLeftLayer} {...panResponder.panHandlers} />
+
+      {showActionBtns && currentChannel.name !== '' && currentChannel.name !== 'Unknown Channel' && (
+        <View style={styles.actionRowContainer} pointerEvents="box-none">
+            <TouchableOpacity 
+              style={[styles.nativeSubBtn, currentChannel.isSubscribed && styles.nativeSubbedBtn]} 
+              onPress={handleNativeSubscribe} activeOpacity={0.8}
+            >
+              <Text style={[styles.nativeSubText, currentChannel.isSubscribed && styles.nativeSubbedText]}>
+                {currentChannel.isSubscribed ? 'Subscribed' : 'Subscribe'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.nativeShareBtn} onPress={handleShare} activeOpacity={0.8}>
+              <Ionicons name="arrow-redo-outline" size={18} color="#FFF" />
+              <Text style={styles.nativeShareText}>Share</Text>
+            </TouchableOpacity>
+        </View>
+      )}
+
+      {showUnmuteBtn && (
+        <TouchableOpacity activeOpacity={0.8} style={styles.unmuteBadge} onPress={handleUnmutePress}>
+          <Ionicons name="volume-mute" size={18} color="#FFF" />
+          <Text style={styles.unmuteText}>UnmuteuseFocusEffect(
+    useCallback(() => {
+      if (isOffline) {
+        checkAndLoadCache();
+      }
+    }, [isOffline])
+  );
+
+  useEffect(() => {
+    setShortsLoading(true);
+    setShowUnmuteBtn(false);
+    
+    checkAndLoadCache();
+
+    const timerLoading = setTimeout(() => setShortsLoading(false), 2000);
+    const timerUnmute = setTimeout(() => setShowUnmuteBtn(true), 10000); 
+    
+    restartActionTimer();
+
+    return () => { 
+      clearTimeout(timerLoading); 
+      clearTimeout(timerUnmute); 
+      if (subscribeTimerRef.current) clearTimeout(subscribeTimerRef.current);
+    };
+  }, [targetUri, isFocused]);
+
+  const handleNativeSubscribe = async () => {
+    let channelNameToSave = currentChannel.name;
+    if (!channelNameToSave || channelNameToSave === 'Unknown Channel' || channelNameToSave === 'Loading...') return; 
+
+    try {
+      let subs = await AsyncStorage.getItem('subscribedChannels');
+      let parsedSubs = subs ? JSON.parse(subs) : [];
+      const isSubbed = parsedSubs.some(s => s.name === channelNameToSave);
+      
+      if (isSubbed) {
+        parsedSubs = parsedSubs.filter(s => s.name !== channelNameToSave);
+      } else {
+        parsedSubs.push({ id: Date.now().toString(), name: channelNameToSave, avatar: 'https://via.placeholder.com/150' });
+      }
+      
+      await AsyncStorage.setItem('subscribedChannels', JSON.stringify(parsedSubs));
+      setCurrentChannel(prev => ({ ...prev, isSubscribed: !isSubbed }));
+    } catch (e) {}
+  };
+
+  const handleShare = async () => {
+    try { await Share.share({ message: `Check out this amazing short video: ${currentUrl}` }); } catch (error) {}
+  };
+
+  const handleUnmutePress = () => {
+    if (shortsWebViewRef.current) {
+      shortsWebViewRef.current.injectJavaScript(`
+        var video = document.querySelector('video');
+        if(video) { video.muted = false; video.play().catch(e=>{}); }
+        var unmuteBtn = document.querySelector('.ytp-unmute, .ytm-unmute, button[aria-label*="unmute"]');
+        if (unmuteBtn) { unmuteBtn.click(); }
+        true;
+      `);
+      setShowUnmuteBtn(false); 
+    }
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true, 
+      onStartShouldSetPanResponderCapture: () => false, 
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderRelease: (evt, gestureState) => {
+        const { dy } = gestureState;
+        if (dy < -40) {
+          restartActionTimer(); 
+          shortsWebViewRef.current?.injectJavaScript(`
+            window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+            var scrollable = document.querySelector('ytm-shorts-viewer') || document.body;
+            if(scrollable) scrollable.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+            true;
+          `);
+        } else if (dy > 40) {
+          restartActionTimer(); 
+          shortsWebViewRef.current?.injectJavaScript(`
+            window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
+            var scrollable = document.querySelector('ytm-shorts-viewer') || document.body;
+            if(scrollable) scrollable.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
+            true;
+          `);
+        }
+      }
+    })
+  ).current;
+
+  const shortsInjectScript = `
+    (function() {
+        const style = document.createElement('style');
+        style.innerHTML = \`
+            ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, header, .ytm-bottom-sheet { display: none !important; }
+            ytm-ad-slot-renderer, ytm-promoted-sparkles-web-renderer, .ad-showing, .ad-interrupting, [is-ad], ytm-companion-ad-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; }
+            .reel-player-header-subscribe-button, .ytm-subscribe-button-renderer { opacity: 0 !important; pointer-events: none !important; display: none !important; }
+        \`;
+        document.head.appendChild(style);
+        
+        let activeVideoId = "";
+
+        setInterval(() => {
+            let activeReel = document.querySelector('ytm-reel-video-renderer[is-active]');
+            if (!activeReel) {
+                const reelsList = document.querySelectorAll('ytm-reel-video-renderer');
+                for (let i = 0; i < reelsList.length; i++) {
+                    const rect = reelsList[i].getBoundingClientRect();
+                    if (rect.top > -200 && rect.top < window.innerHeight / 2) {
+                        activeReel = reelsList[i];
+                        break;
+                    }
+                }
+            }
+
+            if (activeReel) {
+                const vid = activeReel.querySelector('video');
+                const uniqueId = activeReel.id || (vid ? vid.src : "");
+                
+                var channelName = '';
+                var linkElem = activeReel.querySelector('a[href^="/@"]');
+                if (linkElem) {
+                    var hrefVal = linkElem.getAttribute('href');
+                    channelName = hrefVal.split('?')[0].replace('/', ''); 
+                } else {
+                    var textElements = activeReel.querySelectorAll('.yt-core-attributed-string, .reel-channel-name, .ytm-reel-channel-renderer span, h2');
+                    for (var k = 0; k < textElements.length; k++) {
+                        var txt = textElements[k].innerText ? textElements[k].innerText.trim() : '';
+                        if (txt.length > 0 && txt !== 'Subscribe' && txt !== 'সাবস্ক্রাইব') {
+                            channelName = txt;
+                            break;
+                        }
+                    }
+                }
+
+                let vId = "";
+                const match = window.location.href.match(/\\/shorts\\/([a-zA-Z0-9_-]+)/);
+                if(match && match[1]) {
+                    vId = match[1];
+                }
+
+                if (uniqueId && uniqueId !== activeVideoId) {
+                    activeVideoId = uniqueId;
+                    window.ReactNativeWebView.postMessage(JSON.stringify({ 
+                        type: 'NEW_VIDEO_STARTED',
+                        url: window.location.href,
+                        videoId: vId,
+                        channel: channelName
+                    }));
+                }
+
+                if(channelName && channelName !== '') {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'CHANNEL_SYNC', name: channelName }));
+                }
+            }
+
+            const skipBtn = document.querySelector('.ytp-ad-skip-button') || document.querySelector('.ytp-skip-ad-button');
+            if (skipBtn) skipBtn.click();
+            
+            const adShowing = document.querySelector('.ad-showing');
+            const vidElement = document.querySelector('video');
+            if (adShowing && vidElement) vidElement.playbackRate = 16.0;
+
+            const reels = document.querySelectorAll('ytm-reel-video-renderer');
+            for (let i = 0; i < reels.length; i++) {
+                const reel = reels[i];
+                const textContent = reel.innerText || reel.textContent || "";
+                const hasAdBadge = reel.querySelector('ytm-ad-slot-renderer, [is-ad], .brand-info') !== null;
+                const hasAdKeyword = /sponsored|প্রযোজিত|ad|promoted|advertisement/i.test(textContent.toLowerCase());
+
+                if (hasAdBadge || hasAdKeyword) {
+                    const rect = reel.getBoundingClientRect();
+                    if (rect.top > -200 && rect.top < window.innerHeight) {
+                        window.ReactNativeWebView.postMessage('SKIP_START');
+                        const v = reel.querySelector('video');
+                        if (v) { v.src = ''; v.remove(); }
+                        reel.style.opacity = '0';
+                        reel.style.display = 'none';
+                        const nextReel = reels[i + 1];
+                        if (nextReel) nextReel.scrollIntoView({ behavior: 'auto', block: 'start' });
+                        setTimeout(() => { reel.remove(); window.ReactNativeWebView.postMessage('SKIP_END'); }, 300);
+                    }
+                }
+            }
+        }, 250); 
+    })();
+    true;
+  `;
+
+  const checkSubscription = async (name) => {
+    try {
+        const subs = await AsyncStorage.getItem('subscribedChannels');
+        const parsedSubs = subs ? JSON.parse(subs) : [];
+        setCurrentChannel({ name: name, isSubscribed: parsedSubs.some(s => s.name === name) });
+    } catch(e){}
+  };
+
+  const fetchDirectUrlAndCache = async (vId, channel) => {
+    try {
+        if (!vId) return;
+        
+        let saved = await AsyncStorage.getItem('cached_shorts');
+        let parsed = saved ? JSON.parse(saved) : [];
+        
+        if (parsed.some(c => c.videoId === vId)) return; 
+
+        const apiUrl = `${MY_API_SERVER}/api/extract?url=https://www.youtube.com/watch?v=${vId}&quality=360`;
         const res = await fetch(apiUrl);
         const json = await res.json();
 
