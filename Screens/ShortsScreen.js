@@ -1,515 +1,165 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions, PanResponder, Share, FlatList, SafeAreaView } from 'react-native';
-import { WebView } from 'react-native-webview';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions, FlatList, SafeAreaView, StatusBar, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation, useIsFocused, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { Video } from 'expo-av';
-import * as FileSystem from 'expo-file-system'; 
 
 const { width, height } = Dimensions.get('window');
-const STABLE_USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36";
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
 
-export default function ShortsScreen({ initialVideoId, route }) {
+export default function ShortsScreen() {
   const navigation = useNavigation();
   const isFocused = useIsFocused();
   
-  const [isAutoSkipping, setIsAutoSkipping] = useState(false);
-  const [shortsLoading, setShortsLoading] = useState(true);
-  
-  const [showUnmuteBtn, setShowUnmuteBtn] = useState(false);
-  const [showActionBtns, setShowActionBtns] = useState(false);
-  
-  const [currentUrl, setCurrentUrl] = useState(`https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId || ''}`);
-  const [currentChannel, setCurrentChannel] = useState({ name: 'Unknown Channel', isSubscribed: false });
-  
-  const subscribeTimerRef = useRef(null);
-  const currentChannelNameRef = useRef(''); 
-  const shortsWebViewRef = useRef(null);
+  const [shortsList, setShortsList] = useState([]);
+  const [visibleIndex, setVisibleIndex] = useState(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  const [isOffline, setIsOffline] = useState(false);
-  const [cachedShorts, setCachedShorts] = useState([]);
-  const [visibleIndex, setVisibleIndex] = useState(0); 
-
-  const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
-
-  const restartActionTimer = () => {
-    setShowActionBtns(false);
-    if (subscribeTimerRef.current) clearTimeout(subscribeTimerRef.current);
-    subscribeTimerRef.current = setTimeout(() => {
-      setShowActionBtns(true);
-    }, 15000); 
-  };
-
-  const checkAndLoadCache = async () => {
+  // সার্ভার থেকে শর্টস কল করে আনার ফাংশন
+  const fetchShorts = async (count = 1) => {
+    if (isLoadingMore) return;
+    setIsLoadingMore(true);
     try {
-      const cacheLimit = global.appSettings?.shortsCacheLimit || 3600000; 
-      const now = Date.now();
-      let saved = await AsyncStorage.getItem('cached_shorts');
-      
-      if (saved) {
-        let parsed = JSON.parse(saved);
-        const validItems = [];
+        const res = await fetch(`${MY_API_SERVER}/api/get-shorts?count=${count}`);
+        const data = await res.json();
         
-        for (const item of parsed) {
-          const fileInfo = await FileSystem.getInfoAsync(item.uri);
-          
-          if (fileInfo.exists) {
-            if (now - item.timestamp > cacheLimit) {
-              try { await FileSystem.deleteAsync(item.uri, { idempotent: true }); } catch(e) {}
-            } else {
-              const finalUri = item.uri.startsWith('file://') ? item.uri : `file://${item.uri}`;
-              validItems.push({ ...item, uri: finalUri });
-            }
-          }
+        if (data.success && data.shorts.length > 0) {
+            setShortsList(prev => [...prev, ...data.shorts]);
         }
-        
-        setCachedShorts(validItems);
-        if (validItems.length !== parsed.length) {
-          await AsyncStorage.setItem('cached_shorts', JSON.stringify(validItems));
-        }
-      }
     } catch (e) {
-      console.log("Cache Load Error:", e);
+        console.log("Error fetching shorts from buffer", e);
     }
+    setIsLoadingMore(false);
   };
-
-  useFocusEffect(
-    useCallback(() => {
-      if (isOffline) {
-        checkAndLoadCache();
-      }
-    }, [isOffline])
-  );
 
   useEffect(() => {
-    setShortsLoading(true);
-    setShowUnmuteBtn(false);
-    
-    checkAndLoadCache();
-
-    const timerLoading = setTimeout(() => setShortsLoading(false), 2000);
-    const timerUnmute = setTimeout(() => setShowUnmuteBtn(true), 10000); 
-    
-    restartActionTimer();
-
-    return () => { 
-      clearTimeout(timerLoading); 
-      clearTimeout(timerUnmute); 
-      if (subscribeTimerRef.current) clearTimeout(subscribeTimerRef.current);
-    };
-  }, [targetUri, isFocused]);
-
-  const handleNativeSubscribe = async () => {
-    let channelNameToSave = currentChannel.name;
-    if (!channelNameToSave || channelNameToSave === 'Unknown Channel' || channelNameToSave === 'Loading...') return; 
-
-    try {
-      let subs = await AsyncStorage.getItem('subscribedChannels');
-      let parsedSubs = subs ? JSON.parse(subs) : [];
-      const isSubbed = parsedSubs.some(s => s.name === channelNameToSave);
-      
-      if (isSubbed) {
-        parsedSubs = parsedSubs.filter(s => s.name !== channelNameToSave);
-      } else {
-        parsedSubs.push({ id: Date.now().toString(), name: channelNameToSave, avatar: 'https://via.placeholder.com/150' });
-      }
-      
-      await AsyncStorage.setItem('subscribedChannels', JSON.stringify(parsedSubs));
-      setCurrentChannel(prev => ({ ...prev, isSubscribed: !isSubbed }));
-    } catch (e) {}
-  };
-
-  const handleShare = async () => {
-    try { await Share.share({ message: `Check out this amazing short video: ${currentUrl}` }); } catch (error) {}
-  };
-
-  const handleUnmutePress = () => {
-    if (shortsWebViewRef.current) {
-      shortsWebViewRef.current.injectJavaScript(`
-        var video = document.querySelector('video');
-        if(video) { video.muted = false; video.play().catch(e=>{}); }
-        var unmuteBtn = document.querySelector('.ytp-unmute, .ytm-unmute, button[aria-label*="unmute"]');
-        if (unmuteBtn) { unmuteBtn.click(); }
-        true;
-      `);
-      setShowUnmuteBtn(false); 
-    }
-  };
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true, 
-      onStartShouldSetPanResponderCapture: () => false, 
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderRelease: (evt, gestureState) => {
-        const { dy } = gestureState;
-        if (dy < -40) {
-          restartActionTimer(); 
-          shortsWebViewRef.current?.injectJavaScript(`
-            window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
-            var scrollable = document.querySelector('ytm-shorts-viewer') || document.body;
-            if(scrollable) scrollable.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
-            true;
-          `);
-        } else if (dy > 40) {
-          restartActionTimer(); 
-          shortsWebViewRef.current?.injectJavaScript(`
-            window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
-            var scrollable = document.querySelector('ytm-shorts-viewer') || document.body;
-            if(scrollable) scrollable.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
-            true;
-          `);
-        }
-      }
-    })
-  ).current;
-
-  const checkSubscription = async (name) => {
-    try {
-        const subs = await AsyncStorage.getItem('subscribedChannels');
-        const parsedSubs = subs ? JSON.parse(subs) : [];
-        setCurrentChannel({ name: name, isSubscribed: parsedSubs.some(s => s.name === name) });
-    } catch(e){}
-  };
-
-  const fetchDirectUrlAndCache = async (vId, channel) => {
-    try {
-        if (!vId) return;
-        
-        let saved = await AsyncStorage.getItem('cached_shorts');
-        let parsed = saved ? JSON.parse(saved) : [];
-        
-        if (parsed.some(c => c.videoId === vId)) return; 
-
-        const apiUrl = `${MY_API_SERVER}/api/extract?url=https://www.youtube.com/watch?v=${vId}&quality=360`;
-        const res = await fetch(apiUrl);
-        const json = await res.json();
-
-        if (json.success && json.url) {
-            const fileName = `short_${vId}.mp4`;
-            const fileUri = FileSystem.cacheDirectory + fileName;
-
-            const fileInfo = await FileSystem.getInfoAsync(fileUri);
-            if (!fileInfo.exists) {
-                const dl = await FileSystem.downloadAsync(json.url, fileUri);
-                if (dl.status === 200) {
-                    const newShort = { id: vId, videoId: vId, uri: dl.uri, channel: channel, timestamp: Date.now() };
-                    
-                    parsed.unshift(newShort);
-                    if(parsed.length > 20) { 
-                        const removed = parsed.pop();
-                        FileSystem.deleteAsync(removed.uri, {idempotent: true}).catch(()=>{});
-                    }
-                    
-                    await AsyncStorage.setItem('cached_shorts', JSON.stringify(parsed));
-                    setCachedShorts(parsed);
-                }
-            }
-        }
-    } catch(e) {
-        console.log("Caching Error:", e);
-    }
-  };
-
-  const onShortsMessage = async (event) => {
-    const rawData = event.nativeEvent.data;
-    if (rawData === "SKIP_START") setIsAutoSkipping(true);
-    else if (rawData === "SKIP_END") setIsAutoSkipping(false);
-    else {
-        try {
-          const data = JSON.parse(rawData);
-          
-          if (data.type === 'NEW_VIDEO_STARTED') {
-              if (data.url) setCurrentUrl(data.url); 
-              if (data.videoId) {
-                  fetchDirectUrlAndCache(data.videoId, data.channel);
-              }
-          }
-          
-          if (data.type === 'CHANNEL_SYNC' && data.name) {
-              if (currentChannelNameRef.current !== data.name) {
-                  currentChannelNameRef.current = data.name;
-                  checkSubscription(data.name);
-              }
-          }
-        } catch (e) {}
-    }
-  };
-
-  const handleShouldStartLoadWithRequest = (request) => {
-    const url = request.url;
-    if (url.includes('youtube.com/@') || url.includes('/channel/') || url.includes('/c/')) {
-      let extractedName = 'YouTube Channel';
-      if (url.includes('/@')) extractedName = '@' + url.split('/@')[1].split('/')[0].split('?')[0];
-      navigation.navigate('Channel', { channelName: extractedName });
-      return false; 
-    }
-    return true;
-  };
+    // স্ক্রিন ওপেন হওয়ার সাথে সাথে ৩টি শর্টস নিয়ে আসবে
+    fetchShorts(3); 
+  }, []);
 
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (viewableItems.length > 0) {
-        setVisibleIndex(viewableItems[0].index);
+        const index = viewableItems[0].index;
+        setVisibleIndex(index);
+        
+        // [LOGIC]: একটি শর্টস পার হলেই নতুন আরেকটি শর্টস সার্ভার থেকে এনে নিচে যোগ করবে
+        if (index > 0) {
+            fetchShorts(1);
+        }
     }
   }).current;
+
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
-const shortsInjectScript = `
-    (function() {
-        const style = document.createElement('style');
-        style.innerHTML = \`
-            ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, header, .ytm-bottom-sheet { display: none !important; }
-            ytm-ad-slot-renderer, ytm-promoted-sparkles-web-renderer, .ad-showing, .ad-interrupting, [is-ad], ytm-companion-ad-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; }
-            .reel-player-header-subscribe-button, .ytm-subscribe-button-renderer { opacity: 0 !important; pointer-events: none !important; display: none !important; }
-        \`;
-        document.head.appendChild(style);
-        
-        let activeVideoId = "";
 
-        setInterval(() => {
-            let activeReel = document.querySelector('ytm-reel-video-renderer[is-active]');
-            if (!activeReel) {
-                const reelsList = document.querySelectorAll('ytm-reel-video-renderer');
-                for (let i = 0; i < reelsList.length; i++) {
-                    const rect = reelsList[i].getBoundingClientRect();
-                    if (rect.top > -200 && rect.top < window.innerHeight / 2) {
-                        activeReel = reelsList[i];
-                        break;
-                    }
-                }
-            }
-
-            if (activeReel) {
-                const vid = activeReel.querySelector('video');
-                const uniqueId = activeReel.id || (vid ? vid.src : "");
-                
-                var channelName = '';
-                var linkElem = activeReel.querySelector('a[href^="/@"]');
-                if (linkElem) {
-                    var hrefVal = linkElem.getAttribute('href');
-                    channelName = hrefVal.split('?')[0].replace('/', ''); 
-                } else {
-                    var textElements = activeReel.querySelectorAll('.yt-core-attributed-string, .reel-channel-name, .ytm-reel-channel-renderer span, h2');
-                    for (var k = 0; k < textElements.length; k++) {
-                        var txt = textElements[k].innerText ? textElements[k].innerText.trim() : '';
-                        if (txt.length > 0 && txt !== 'Subscribe' && txt !== 'সাবস্ক্রাইব') {
-                            channelName = txt;
-                            break;
-                        }
-                    }
-                }
-
-                let vId = "";
-                const match = window.location.href.match(/\\/shorts\\/([a-zA-Z0-9_-]+)/);
-                if(match && match[1]) {
-                    vId = match[1];
-                }
-
-                if (uniqueId && uniqueId !== activeVideoId) {
-                    activeVideoId = uniqueId;
-                    window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                        type: 'NEW_VIDEO_STARTED',
-                        url: window.location.href,
-                        videoId: vId,
-                        channel: channelName
-                    }));
-                }
-
-                if(channelName && channelName !== '') {
-                    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'CHANNEL_SYNC', name: channelName }));
-                }
-            }
-
-            const skipBtn = document.querySelector('.ytp-ad-skip-button') || document.querySelector('.ytp-skip-ad-button');
-            if (skipBtn) skipBtn.click();
-            
-            const adShowing = document.querySelector('.ad-showing');
-            const vidElement = document.querySelector('video');
-            if (adShowing && vidElement) vidElement.playbackRate = 16.0;
-
-            const reels = document.querySelectorAll('ytm-reel-video-renderer');
-            for (let i = 0; i < reels.length; i++) {
-                const reel = reels[i];
-                const textContent = reel.innerText || reel.textContent || "";
-                const hasAdBadge = reel.querySelector('ytm-ad-slot-renderer, [is-ad], .brand-info') !== null;
-                const hasAdKeyword = /sponsored|প্রযোজিত|ad|promoted|advertisement/i.test(textContent.toLowerCase());
-
-                if (hasAdBadge || hasAdKeyword) {
-                    const rect = reel.getBoundingClientRect();
-                    if (rect.top > -200 && rect.top < window.innerHeight) {
-                        window.ReactNativeWebView.postMessage('SKIP_START');
-                        const v = reel.querySelector('video');
-                        if (v) { v.src = ''; v.remove(); }
-                        reel.style.opacity = '0';
-                        reel.style.display = 'none';
-                        const nextReel = reels[i + 1];
-                        if (nextReel) nextReel.scrollIntoView({ behavior: 'auto', block: 'start' });
-                        setTimeout(() => { reel.remove(); window.ReactNativeWebView.postMessage('SKIP_END'); }, 300);
-                    }
-                }
-            }
-        }, 250); 
-    })();
-    true;
-  `;
-
-  if (isOffline) {
+  const renderItem = ({ item, index }) => {
+      const isPlaying = index === visibleIndex && isFocused;
+      
       return (
-          <SafeAreaView style={styles.container}>
-              <View style={styles.offlineHeader}>
-                  <TouchableOpacity onPress={() => { setIsOffline(false); navigation.goBack(); }} style={styles.headerIconBtn}>
-                      <Ionicons name="arrow-back" size={28} color="#FFF" />
-                  </TouchableOpacity>
-                  <Text style={styles.offlineHeaderText}>Offline Shorts</Text>
-              </View>
-
-              {cachedShorts.length > 0 ? (
-                  <FlatList
-                      data={cachedShorts}
-                      keyExtractor={item => item.id}
-                      pagingEnabled
-                      showsVerticalScrollIndicator={false}
-                      onViewableItemsChanged={onViewableItemsChanged}
-                      viewabilityConfig={viewabilityConfig}
-                      renderItem={({item, index}) => (
-                          <View style={{ width: width, height: height }}>
-                              <Video 
-                                  source={{ uri: item.uri }} 
-                                  style={StyleSheet.absoluteFill} 
-                                  shouldPlay={index === visibleIndex && isFocused} 
-                                  isLooping 
-                                  resizeMode="cover" 
-                                  useNativeControls={false}
-                              />
-                              <View style={styles.offlineActionRow}>
-                                  <Text style={styles.offlineChannelName}>@{item.channel || 'Shorts'}</Text>
-                                  <View style={styles.offlineBadge}>
-                                      <Ionicons name="cloud-offline" size={14} color="#FFF" />
-                                      <Text style={styles.offlineBadgeText}>Cached Video</Text>
-                                  </View>
-                              </View>
-                          </View>
-                      )}
-                  />
-              ) : (
-                  <View style={styles.offlineEmpty}>
-                      <Ionicons name="wifi-outline" size={80} color="#444" />
-                      <Text style={styles.offlineEmptyText}>আপনি এখন অফলাইনে আছেন</Text>
-                      <Text style={styles.offlineEmptySub}>ইন্টারনেট সংযোগ চালু করে আবার চেষ্টা করুন</Text>
-                      <TouchableOpacity style={styles.retryBtn} onPress={() => {
-                          checkAndLoadCache();
-                          setIsOffline(false);
-                      }}>
-                          <Text style={styles.retryText}>রিলোড করুন</Text>
+          <View style={styles.shortContainer}>
+              {/* Native Video Player */}
+              <Video 
+                  source={{ uri: item.url }}
+                  style={StyleSheet.absoluteFill}
+                  shouldPlay={isPlaying}
+                  isLooping
+                  resizeMode="cover"
+                  useNativeControls={false}
+              />
+              
+              {/* ওভারলে UI (TikTok/Shorts স্টাইল) */}
+              <View style={styles.overlay}>
+                  <View style={styles.topHeader}>
+                      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                          <Ionicons name="arrow-back" size={28} color="#FFF" />
                       </TouchableOpacity>
+                      <Text style={styles.headerTitle}>Shorts</Text>
+                      <View style={{ width: 28 }} />
                   </View>
-              )}
-          </SafeAreaView>
+
+                  <View style={styles.bottomSection}>
+                      <View style={styles.infoCol}>
+                          <View style={styles.channelRow}>
+                              <Image source={{ uri: item.thumbnail }} style={styles.channelAvatar} />
+                              <Text style={styles.channelText}>@{item.channel}</Text>
+                              <TouchableOpacity style={styles.subBtn}>
+                                  <Text style={styles.subBtnText}>Subscribe</Text>
+                              </TouchableOpacity>
+                          </View>
+                          <Text style={styles.titleText} numberOfLines={3}>{item.title}</Text>
+                      </View>
+                      
+                      <View style={styles.actionCol}>
+                          <TouchableOpacity style={styles.actionBtn}>
+                              <Ionicons name="heart" size={32} color="#FFF" />
+                              <Text style={styles.actionLabel}>Like</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.actionBtn}>
+                              <Ionicons name="chatbubble" size={30} color="#FFF" />
+                              <Text style={styles.actionLabel}>Comment</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.actionBtn}>
+                              <Ionicons name="arrow-redo" size={32} color="#FFF" />
+                              <Text style={styles.actionLabel}>Share</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.actionBtn}>
+                              <Image source={{ uri: item.thumbnail }} style={styles.musicThumb} />
+                          </TouchableOpacity>
+                      </View>
+                  </View>
+              </View>
+          </View>
       );
-  }
+  };
 
   return (
-    <View style={styles.container}>
-      <WebView
-        ref={shortsWebViewRef} 
-        source={{ uri: targetUri }} 
-        userAgent={STABLE_USER_AGENT} 
-        injectedJavaScript={shortsInjectScript} 
-        onMessage={onShortsMessage} 
-        onLoadEnd={() => setShortsLoading(false)} 
-        javaScriptEnabled={true} 
-
-        onError={(e) => {
-            if (e.nativeEvent.code === -2 || String(e.nativeEvent.description).includes('DISCONNECTED')) {
-                setIsOffline(true);
-                checkAndLoadCache(); 
-            }
-        }}
-
-        cacheEnabled={true}
-        cacheMode="LOAD_CACHE_ELSE_NETWORK"
-        domStorageEnabled={true}
-        onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
-        containerStyle={{ flex: 1 }} 
-      />
-      
-      <View style={styles.bottomLayer} {...panResponder.panHandlers} />
-      <View style={styles.rightMiddleLayer} {...panResponder.panHandlers} />
-      <View style={styles.topRightLayer} {...panResponder.panHandlers} />
-      <View style={styles.topLeftLayer} {...panResponder.panHandlers} />
-
-      {showActionBtns && currentChannel.name !== '' && currentChannel.name !== 'Unknown Channel' && (
-        <View style={styles.actionRowContainer} pointerEvents="box-none">
-            <TouchableOpacity 
-              style={[styles.nativeSubBtn, currentChannel.isSubscribed && styles.nativeSubbedBtn]} 
-              onPress={handleNativeSubscribe} activeOpacity={0.8}
-            >
-              <Text style={[styles.nativeSubText, currentChannel.isSubscribed && styles.nativeSubbedText]}>
-                {currentChannel.isSubscribed ? 'Subscribed' : 'Subscribe'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.nativeShareBtn} onPress={handleShare} activeOpacity={0.8}>
-              <Ionicons name="arrow-redo-outline" size={18} color="#FFF" />
-              <Text style={styles.nativeShareText}>Share</Text>
-            </TouchableOpacity>
-        </View>
+    <SafeAreaView style={styles.container}>
+      <StatusBar backgroundColor="transparent" translucent barStyle="light-content" />
+      {shortsList.length === 0 ? (
+          <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#FF0000" />
+              <Text style={styles.loadingText}>সার্ভার থেকে ভিডিও আনা হচ্ছে...</Text>
+              <Text style={styles.loadingSubText}>(সার্ভারে আইডি পাঠানো নিশ্চিত করুন)</Text>
+          </View>
+      ) : (
+          <FlatList
+              data={shortsList}
+              keyExtractor={(item, index) => item.videoId + index.toString()}
+              renderItem={renderItem}
+              pagingEnabled
+              showsVerticalScrollIndicator={false}
+              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={viewabilityConfig}
+              bounces={false}
+          />
       )}
-
-      {showUnmuteBtn && (
-        <TouchableOpacity activeOpacity={0.8} style={styles.unmuteBadge} onPress={handleUnmutePress}>
-          <Ionicons name="volume-mute" size={18} color="#FFF" />
-          <Text style={styles.unmuteText}>Unmute</Text>
-        </TouchableOpacity>
-      )}
-
-      {isAutoSkipping && (
-        <View style={styles.skipOverlay}>
-          <ActivityIndicator size="large" color="#FF0000" />
-          <Text style={styles.skipText}>অ্যাড ফিল্টার হচ্ছে...</Text>
-        </View>
-      )}
-      
-      {shortsLoading && !isAutoSkipping && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#FF0000" />
-        </View>
-      )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', zIndex: 10 },
-  skipOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', zIndex: 100 },
-  skipText: { color: '#FFF', marginTop: 15, fontWeight: 'bold' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  loadingText: { color: '#FFF', fontSize: 16, marginTop: 15, fontWeight: 'bold' },
+  loadingSubText: { color: '#AAA', fontSize: 12, marginTop: 5 },
   
-  bottomLayer: { position: 'absolute', bottom: 0, left: 0, width: '100%', height: height / 3, backgroundColor: 'transparent', zIndex: 5 },
-  rightMiddleLayer: { position: 'absolute', top: height / 4, right: 0, width: width / 4, height: height / 2, backgroundColor: 'transparent', zIndex: 5 },
-  topRightLayer: { position: 'absolute', top: 0, right: 0, width: width / 4, height: height / 10, backgroundColor: 'transparent', zIndex: 5 },
-  topLeftLayer: { position: 'absolute', top: 0, left: 0, width: width / 2, height: height / 8, backgroundColor: 'transparent', zIndex: 5 },
+  shortContainer: { width: width, height: height, backgroundColor: '#000' },
+  overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between' },
   
-  actionRowContainer: { position: 'absolute', bottom: height / 5, left: 15, flexDirection: 'row', alignItems: 'center', zIndex: 99999, elevation: 100 },
-  nativeSubBtn: { backgroundColor: '#FF0000', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 25, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-  nativeSubbedBtn: { backgroundColor: '#333', borderColor: '#555' },
-  nativeSubText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
-  nativeSubbedText: { color: '#AAA' },
-  nativeShareBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 15, paddingVertical: 10, borderRadius: 25, marginLeft: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-  nativeShareText: { color: '#FFF', fontWeight: 'bold', fontSize: 13, marginLeft: 6 },
-  unmuteBadge: { position: 'absolute', top: 50, right: 15, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 0, 0, 0.8)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', zIndex: 99999 },
-
-  offlineHeader: { flexDirection: 'row', alignItems: 'center', padding: 15, position: 'absolute', top: 0, zIndex: 10, width: '100%', backgroundColor: 'rgba(0,0,0,0.4)' },
-  headerIconBtn: { paddingRight: 10 },
-  offlineHeaderText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
-  offlineActionRow: { position: 'absolute', bottom: 100, left: 15 },
-  offlineChannelName: { color: '#FFF', fontSize: 18, fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3 },
-  offlineBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,191,165,0.8)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginTop: 8, alignSelf: 'flex-start' },
-  offlineBadgeText: { color: '#FFF', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
-  offlineEmpty: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0F0F' },
-  offlineEmptyText: { color: '#FFF', fontSize: 20, fontWeight: 'bold', marginTop: 15 },
-  offlineEmptySub: { color: '#888', fontSize: 14, marginTop: 5, marginBottom: 20 },
-  retryBtn: { backgroundColor: '#00BFA5', paddingHorizontal: 25, paddingVertical: 12, borderRadius: 25 },
-  retryText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 }
+  topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 15, paddingTop: 40 },
+  backBtn: { padding: 5 },
+  headerTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 2 },
+  
+  bottomSection: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingHorizontal: 15, paddingBottom: 80 },
+  infoCol: { flex: 1, paddingRight: 20 },
+  channelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  channelAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#333', borderWidth: 1, borderColor: '#FFF' },
+  channelText: { color: '#FFF', fontSize: 15, fontWeight: 'bold', marginHorizontal: 10, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3 },
+  subBtn: { backgroundColor: '#FF0000', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15 },
+  subBtnText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
+  titleText: { color: '#FFF', fontSize: 14, lineHeight: 20, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3 },
+  
+  actionCol: { alignItems: 'center' },
+  actionBtn: { alignItems: 'center', marginBottom: 20 },
+  actionLabel: { color: '#FFF', fontSize: 12, marginTop: 5, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3 },
+  musicThumb: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#333', marginTop: 10 }
 });
