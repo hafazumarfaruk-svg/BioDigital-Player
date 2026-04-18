@@ -7,7 +7,7 @@ import { Video } from 'expo-av';
 const { width, height } = Dimensions.get('window');
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
 
-export default function ShortsScreen() {
+export default function ShortsScreen({ initialVideoId, route }) {
   const navigation = useNavigation();
   const isFocused = useIsFocused();
   
@@ -15,16 +15,27 @@ export default function ShortsScreen() {
   const [visibleIndex, setVisibleIndex] = useState(0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // সার্ভার থেকে শর্টস কল করে আনার ফাংশন
-  const fetchShorts = async (count = 1) => {
+  // [NEW]: সার্ভার থেকে ভিডিও আনার ফাংশন, যা সার্ভার রেডি না থাকলে কিছুক্ষণ পর আবার ট্রাই করবে (Retry Logic)
+  const fetchShorts = async (count = 1, retries = 0) => {
     if (isLoadingMore) return;
     setIsLoadingMore(true);
     try {
         const res = await fetch(`${MY_API_SERVER}/api/get-shorts?count=${count}`);
         const data = await res.json();
         
-        if (data.success && data.shorts.length > 0) {
-            setShortsList(prev => [...prev, ...data.shorts]);
+        if (data.success && data.shorts && data.shorts.length > 0) {
+            setShortsList(prev => {
+                // ডুপ্লিকেট ভিডিও আটকানোর লজিক
+                const newShorts = data.shorts.filter(s => !prev.find(p => p.videoId === s.videoId));
+                return [...prev, ...newShorts];
+            });
+        } else if (retries < 5) {
+            // যদি সার্ভারে এখনো ভিডিও প্রসেস না হয়ে থাকে, তাহলে ২ সেকেন্ড পর আবার চেষ্টা করবে
+            setTimeout(() => {
+                setIsLoadingMore(false);
+                fetchShorts(count, retries + 1);
+            }, 2000);
+            return;
         }
     } catch (e) {
         console.log("Error fetching shorts from buffer", e);
@@ -33,8 +44,18 @@ export default function ShortsScreen() {
   };
 
   useEffect(() => {
-    // স্ক্রিন ওপেন হওয়ার সাথে সাথে ৩টি শর্টস নিয়ে আসবে
-    fetchShorts(3); 
+    // [NEW]: স্ক্রিন ওপেন হওয়ার সাথে সাথে কাঙ্ক্ষিত আইডিটি সার্ভারে পাঠানো
+    const initId = initialVideoId || route?.params?.videoId;
+    const initializeFeed = async () => {
+        if (initId) {
+            // আইডি সার্ভারে পুশ করা হচ্ছে
+            await fetch(`${MY_API_SERVER}/api/add-shorts?ids=${initId}`);
+        }
+        // তারপর ৩টি শর্টস আনার জন্য রিকোয়েস্ট
+        fetchShorts(3); 
+    };
+    
+    initializeFeed();
   }, []);
 
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
@@ -42,9 +63,9 @@ export default function ShortsScreen() {
         const index = viewableItems[0].index;
         setVisibleIndex(index);
         
-        // [LOGIC]: একটি শর্টস পার হলেই নতুন আরেকটি শর্টস সার্ভার থেকে এনে নিচে যোগ করবে
-        if (index > 0) {
-            fetchShorts(1);
+        // একটি শর্টস পার হলেই নতুন আরেকটি শর্টস সার্ভার থেকে এনে নিচে যোগ করবে
+        if (index > 0 && index >= shortsList.length - 2) {
+            fetchShorts(2);
         }
     }
   }).current;
@@ -66,7 +87,6 @@ export default function ShortsScreen() {
                   useNativeControls={false}
               />
               
-              {/* ওভারলে UI (TikTok/Shorts স্টাইল) */}
               <View style={styles.overlay}>
                   <View style={styles.topHeader}>
                       <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -117,8 +137,8 @@ export default function ShortsScreen() {
       {shortsList.length === 0 ? (
           <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#FF0000" />
-              <Text style={styles.loadingText}>সার্ভার থেকে ভিডিও আনা হচ্ছে...</Text>
-              <Text style={styles.loadingSubText}>(সার্ভারে আইডি পাঠানো নিশ্চিত করুন)</Text>
+              <Text style={styles.loadingText}>সার্ভার থেকে ভিডিও প্রস্তুত করা হচ্ছে...</Text>
+              <Text style={styles.loadingSubText}>(অনুগ্রহ করে কয়েক সেকেন্ড অপেক্ষা করুন)</Text>
           </View>
       ) : (
           <FlatList
@@ -130,6 +150,9 @@ export default function ShortsScreen() {
               onViewableItemsChanged={onViewableItemsChanged}
               viewabilityConfig={viewabilityConfig}
               bounces={false}
+              windowSize={3}
+              initialNumToRender={2}
+              maxToRenderPerBatch={2}
           />
       )}
     </SafeAreaView>
