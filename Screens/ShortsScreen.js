@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useIsFocused, useFocusEffect } from '@react-navigation/native';
 import { Video } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import NetInfo from '@react-native-community/netinfo'; // [NEW]: প্রফেশনাল নেটওয়ার্ক ডিটেকশন
 
 const { width, height } = Dimensions.get('window');
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
@@ -26,10 +26,17 @@ export default function ShortsScreen({ initialVideoId, route }) {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [customCount, setCustomCount] = useState('');
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
+
+  // [NEW]: নেটওয়ার্ক রিয়েল-টাইম মনিটরিং
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOffline(!state.isConnected);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const fetchShorts = async (count = 1, retries = 0) => {
-    if (isLoadingMore) return;
+    if (isLoadingMore || isOffline) return;
     setIsLoadingMore(true);
     try {
         const res = await fetch(`${MY_API_SERVER}/api/get-shorts?count=${count}`);
@@ -48,7 +55,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
             return;
         }
     } catch (e) {
-        setIsOffline(true); // সার্ভার না পেলে অফলাইন মোড
+        console.log("Fetch error, server might be busy.");
     }
     setIsLoadingMore(false);
   };
@@ -62,18 +69,14 @@ export default function ShortsScreen({ initialVideoId, route }) {
         let tempParsed = tempSaved ? JSON.parse(tempSaved) : [];
         let permParsed = permSaved ? JSON.parse(permSaved) : [];
 
-        // ১২ ঘণ্টার পুরনো টেম্পোরারি ক্যাশ মুছে ফেলা
         const validTemp = [];
         for (const item of tempParsed) {
-            if (now - item.timestamp > TEMP_CACHE_LIMIT) {
-                try { await FileSystem.deleteAsync(item.uri, { idempotent: true }); } catch(e){}
-            } else {
+            if (now - item.timestamp <= TEMP_CACHE_LIMIT) {
                 validTemp.push(item);
             }
         }
         if (validTemp.length !== tempParsed.length) await AsyncStorage.setItem('temp_cached_shorts', JSON.stringify(validTemp));
 
-        // পার্মানেন্ট এবং টেম্পোরারি মিলিয়ে অফলাইন লিস্ট তৈরি
         setMergedOfflineShorts([...permParsed, ...validTemp]);
     } catch (e) {}
   };
@@ -88,32 +91,28 @@ export default function ShortsScreen({ initialVideoId, route }) {
     const initId = initialVideoId || route?.params?.videoId;
     const initializeFeed = async () => {
         try {
-            if (initId) await fetch(`${MY_API_SERVER}/api/add-shorts?ids=${initId}`);
-            fetchShorts(3); 
-        } catch(e) {
-            setIsOffline(true);
-        }
+            if (initId && !isOffline) await fetch(`${MY_API_SERVER}/api/add-shorts?ids=${initId}`);
+            if (!isOffline) fetchShorts(3); 
+        } catch(e) {}
     };
     initializeFeed();
     loadOfflineData();
   }, []);
 
+  // [UPDATED]: সার্ভার-সাইড ক্যাশিং
   const cacheVideoTemporarily = async (item) => {
     try {
         let tempSaved = await AsyncStorage.getItem('temp_cached_shorts');
         let parsed = tempSaved ? JSON.parse(tempSaved) : [];
         if (parsed.some(s => s.videoId === item.videoId)) return;
 
-        const fileName = `temp_${item.videoId}.mp4`;
-        const fileUri = FileSystem.cacheDirectory + fileName;
-        
-        const dl = await FileSystem.downloadAsync(item.url, fileUri);
-        if (dl.status === 200) {
-            parsed.push({ ...item, uri: dl.uri, timestamp: Date.now() });
-            if (parsed.length > 50) {
-                const removed = parsed.shift();
-                FileSystem.deleteAsync(removed.uri, {idempotent: true}).catch(()=>{});
-            }
+        // সার্ভারকে ডাউনলোড করতে বলা হচ্ছে (ব্যাকগ্রাউন্ডে হবে)
+        const res = await fetch(`${MY_API_SERVER}/api/download-short-bg?id=${item.videoId}&type=temp`);
+        const data = await res.json();
+
+        if (data.success && data.localUrl) {
+            parsed.push({ ...item, uri: data.localUrl, timestamp: Date.now() });
+            if (parsed.length > 50) parsed.shift(); // মেমোরি কন্ট্রোল
             await AsyncStorage.setItem('temp_cached_shorts', JSON.stringify(parsed));
         }
     } catch(e) {}
@@ -136,15 +135,17 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
+  // [UPDATED]: সার্ভার-সাইড বাল্ক ডাউনলোড (ফাস্ট এবং রিলায়েবল)
   const startBulkDownload = async (targetCount) => {
     if (!targetCount || isNaN(targetCount) || targetCount <= 0) return;
     setShowDownloadModal(false);
     setIsBulkDownloading(true);
-    setBulkProgress({ current: 0, total: targetCount });
 
     let downloaded = 0;
     let permSaved = await AsyncStorage.getItem('permanent_shorts');
     let permParsed = permSaved ? JSON.parse(permSaved) : [];
+
+    Alert.alert("ডাউনলোড শুরু হয়েছে", "সার্ভার ব্যাকগ্রাউন্ডে ভিডিওগুলো সেভ করছে।");
 
     while (downloaded < targetCount) {
         try {
@@ -156,44 +157,32 @@ export default function ShortsScreen({ initialVideoId, route }) {
                 for (const item of data.shorts) {
                     if (permParsed.some(s => s.videoId === item.videoId)) continue;
 
-                    const fileName = `perm_${item.videoId}.mp4`;
-                    const fileUri = FileSystem.documentDirectory + fileName; 
-
-                    const dl = await FileSystem.downloadAsync(item.url, fileUri);
-                    if (dl.status === 200) {
-                        permParsed.push({ ...item, uri: dl.uri, isPermanent: true });
+                    // সার্ভারকে ভিডিওটি পার্মানেন্টলি সেভ করতে বলা হলো
+                    const dlRes = await fetch(`${MY_API_SERVER}/api/download-short-bg?id=${item.videoId}&type=perm`);
+                    const dlData = await dlRes.json();
+                    
+                    if (dlData.success && dlData.localUrl) {
+                        permParsed.push({ ...item, uri: dlData.localUrl, isPermanent: true });
                         downloaded++;
-                        setBulkProgress({ current: downloaded, total: targetCount });
                         await AsyncStorage.setItem('permanent_shorts', JSON.stringify(permParsed));
                     }
                 }
             } else {
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
         } catch (e) {
             break;
         }
     }
     setIsBulkDownloading(false);
-    Alert.alert("ডাউনলোড সম্পন্ন", `${downloaded} টি ভিডিও অফলাইনের জন্য সফলভাবে সেভ হয়েছে।`);
   };
 
   const clearDownloads = async (type) => {
       try {
           if (type === 'perm') {
-              let permSaved = await AsyncStorage.getItem('permanent_shorts');
-              let permParsed = permSaved ? JSON.parse(permSaved) : [];
-              for(const item of permParsed) {
-                  try { await FileSystem.deleteAsync(item.uri, {idempotent: true}); } catch(e){}
-              }
               await AsyncStorage.removeItem('permanent_shorts');
-              Alert.alert("সফল", "ডাউনলোড করা সব ভিডিও মুছে ফেলা হয়েছে।");
+              Alert.alert("সফল", "ডাউনলোড করা সব ভিডিও মুছে ফেলা হয়েছে। (সার্ভারের ফোল্ডার থেকেও মুছে দিন)");
           } else {
-              let tempSaved = await AsyncStorage.getItem('temp_cached_shorts');
-              let tempParsed = tempSaved ? JSON.parse(tempSaved) : [];
-              for(const item of tempParsed) {
-                  try { await FileSystem.deleteAsync(item.uri, {idempotent: true}); } catch(e){}
-              }
               await AsyncStorage.removeItem('temp_cached_shorts');
               Alert.alert("সফল", "১২ ঘণ্টার প্লে-হিস্ট্রি ক্যাশ মুছে ফেলা হয়েছে।");
           }
@@ -275,21 +264,12 @@ const renderItem = ({ item, index }) => {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="transparent" translucent barStyle="light-content" />
-      
-      {isBulkDownloading && (
-          <View style={styles.progressToast}>
-              <ActivityIndicator size="small" color="#000" style={{marginRight: 10}}/>
-              <Text style={styles.progressText}>Downloading {bulkProgress.current} of {bulkProgress.total} Shorts...</Text>
-          </View>
-      )}
 
       {isOffline && mergedOfflineShorts.length === 0 ? (
           <View style={styles.loadingContainer}>
               <Ionicons name="wifi-outline" size={80} color="#444" />
               <Text style={styles.loadingText}>অফলাইন ভিডিও নেই</Text>
-              <TouchableOpacity style={styles.subBtn} onPress={() => {setIsOffline(false); fetchShorts(3);}}>
-                  <Text style={styles.subBtnText}>রিলোড করুন</Text>
-              </TouchableOpacity>
+              <Text style={styles.loadingSubText}>ইন্টারনেট চালু করুন</Text>
           </View>
       ) : (!isOffline && shortsList.length === 0) ? (
           <View style={styles.loadingContainer}>
@@ -299,7 +279,7 @@ const renderItem = ({ item, index }) => {
       ) : (
           <FlatList
               data={isOffline ? mergedOfflineShorts : shortsList}
-              keyExtractor={(item, index) => item.videoId + index.toString()}
+              keyExtractor={(item, index) => (item.videoId || item.id) + index.toString()}
               renderItem={renderItem}
               pagingEnabled
               showsVerticalScrollIndicator={false}
@@ -385,10 +365,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
   loadingText: { color: '#FFF', fontSize: 16, marginTop: 15, fontWeight: 'bold' },
+  loadingSubText: { color: '#AAA', fontSize: 12, marginTop: 5 },
   
-  progressToast: { position: 'absolute', top: 50, left: 20, right: 20, backgroundColor: '#00BFA5', padding: 12, borderRadius: 8, zIndex: 999, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
-  progressText: { color: '#000', fontWeight: 'bold', fontSize: 14 },
-
   shortContainer: { width: width, height: height, backgroundColor: '#000' },
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between' },
   
@@ -403,8 +381,6 @@ const styles = StyleSheet.create({
   channelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   channelAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#333', borderWidth: 1, borderColor: '#FFF' },
   channelText: { color: '#FFF', fontSize: 15, fontWeight: 'bold', marginHorizontal: 10, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3 },
-  subBtn: { backgroundColor: '#FF0000', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15 },
-  subBtnText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
   offlineBadge: { backgroundColor: '#00BFA5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   offlineBadgeText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
   titleText: { color: '#FFF', fontSize: 14, lineHeight: 20, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3 },
