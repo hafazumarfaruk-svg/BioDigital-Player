@@ -26,56 +26,34 @@ export default function ShortsScreen({ initialVideoId, route }) {
   const [customCount, setCustomCount] = useState('');
   
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0, percentage: 0 });
+  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
 
-  // রিয়েল-টাইম নেটওয়ার্ক চেক
   useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener(state => {
-      setIsOffline(!state.isConnected);
-    });
+    const unsubscribe = NetInfo.addEventListener(state => setIsOffline(!state.isConnected));
     return () => unsubscribe();
   }, []);
 
-  const fetchShorts = async (count = 5, retries = 0) => {
+  const fetchShorts = async (count = 3) => {
     if (isLoadingMore || isOffline) return;
     setIsLoadingMore(true);
     try {
         const res = await fetch(`${MY_API_SERVER}/api/get-shorts?count=${count}`);
         const data = await res.json();
-        
-        if (data.success && data.shorts && data.shorts.length > 0) {
+        if (data.success && data.shorts.length > 0) {
             setShortsList(prev => {
                 const newShorts = data.shorts.filter(s => !prev.find(p => p.videoId === s.videoId));
                 return [...prev, ...newShorts];
             });
-        } else if (retries < 3) {
-            setTimeout(() => {
-                setIsLoadingMore(false);
-                fetchShorts(count, retries + 1);
-            }, 2000);
-            return;
         }
     } catch (e) {}
     setIsLoadingMore(false);
   };
 
-  // শুধুমাত্র ডাউনলোড করা ভিডিওগুলো লোড করবে
   const loadDownloadedData = async () => {
     try {
         let saved = await AsyncStorage.getItem('permanent_shorts');
         let parsed = saved ? JSON.parse(saved) : [];
-        const validList = [];
-
-        for (const item of parsed) {
-            const fileInfo = await FileSystem.getInfoAsync(item.uri);
-            if(fileInfo.exists) {
-                validList.push(item);
-            }
-        }
-        setDownloadedShorts(validList);
-        if (validList.length !== parsed.length) {
-            await AsyncStorage.setItem('permanent_shorts', JSON.stringify(validList));
-        }
+        setDownloadedShorts(parsed);
     } catch (e) {}
   };
 
@@ -84,7 +62,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
   useEffect(() => {
     const initId = initialVideoId || route?.params?.videoId;
     if (initId && !isOffline) fetch(`${MY_API_SERVER}/api/add-shorts?ids=${initId}`).catch(()=>{});
-    if (!isOffline) fetchShorts(5); 
+    if (!isOffline) fetchShorts(3); 
     loadDownloadedData();
   }, []);
 
@@ -93,22 +71,18 @@ export default function ShortsScreen({ initialVideoId, route }) {
         const index = viewableItems[0].index;
         setVisibleIndex(index);
         
-        // অটো-ক্যাশ ফাংশনটি এখান থেকে সম্পূর্ণ রিমুভ করা হয়েছে এমবি বাঁচানোর জন্য
-        
         if (!isOffline && index > 0 && index >= shortsList.length - 2) {
-            fetchShorts(5);
+            fetchShorts(2);
         }
     }
   }).current;
 
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
-
-  // ম্যানুয়াল বাল্ক ডাউনলোড লজিক
+  // [FIXED]: সার্ভারের মাধ্যমে নিরাপদ ম্যানুয়াল ডাউনলোড
   const startBulkDownload = async (targetCount) => {
     if (!targetCount || isNaN(targetCount) || targetCount <= 0) return;
     setShowDownloadModal(false);
     setIsBulkDownloading(true);
-    setBulkProgress({ current: 0, total: targetCount, percentage: 0 });
+    setBulkProgress({ current: 0, total: targetCount });
 
     let downloaded = 0;
     let saved = await AsyncStorage.getItem('permanent_shorts');
@@ -123,19 +97,14 @@ export default function ShortsScreen({ initialVideoId, route }) {
                 const item = data.shorts[0];
                 if (parsed.some(s => s.videoId === item.videoId)) continue;
 
-                const fileUri = FileSystem.documentDirectory + `perm_${item.videoId}.mp4`;
-                const downloadResumable = FileSystem.createDownloadResumable(
-                    item.url, fileUri, {},
-                    (p) => {
-                        const progress = Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100);
-                        setBulkProgress({ current: downloaded + 1, total: targetCount, percentage: progress });
-                    }
-                );
-
-                const dlResult = await downloadResumable.downloadAsync();
-                if (dlResult.status === 200) {
-                    parsed.push({ ...item, uri: dlResult.uri, isPermanent: true });
+                // সার্ভারকে ডাউনলোড করতে বলা হচ্ছে এবং সার্ভার কনফার্মেশন দিলেই কেবল সেভ হবে
+                const dlRes = await fetch(`${MY_API_SERVER}/api/download-manual?id=${item.videoId}`);
+                const dlData = await dlRes.json();
+                
+                if (dlData.success && dlData.localUrl) {
+                    parsed.push({ ...item, uri: dlData.localUrl, isPermanent: true });
                     downloaded++;
+                    setBulkProgress({ current: downloaded, total: targetCount });
                     await AsyncStorage.setItem('permanent_shorts', JSON.stringify(parsed));
                 }
             } else {
@@ -144,7 +113,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
         } catch (e) { break; }
     }
     setIsBulkDownloading(false);
-    Alert.alert("সফল", `${downloaded} টি ভিডিও অফলাইনের জন্য সেভ হয়েছে।`);
+    Alert.alert("সফল", `${downloaded} টি ভিডিও ডাউনলোড হয়েছে।`);
   };
 
   const deleteDownloads = async () => {
@@ -152,7 +121,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
           let saved = await AsyncStorage.getItem('permanent_shorts');
           let parsed = saved ? JSON.parse(saved) : [];
           for(const item of parsed) {
-              try { await FileSystem.deleteAsync(item.uri, {idempotent: true}); } catch(e){}
+              const fileName = `perm_${item.videoId}.mp4`;
+              const filePath = `/storage/emulated/0/MyTube/ShortsCache/${fileName}`;
+              try { await FileSystem.deleteAsync(`file://${filePath}`, {idempotent: true}); } catch(e){}
           }
           await AsyncStorage.removeItem('permanent_shorts');
           setDownloadedShorts([]);
@@ -219,9 +190,6 @@ const renderItem = ({ item, index }) => {
                               <Ionicons name="arrow-redo" size={32} color="#FFF" />
                               <Text style={styles.actionLabel}>Share</Text>
                           </TouchableOpacity>
-                          <TouchableOpacity style={styles.actionBtn}>
-                              <Image source={{ uri: item.thumbnail }} style={styles.musicThumb} />
-                          </TouchableOpacity>
                       </View>
                   </View>
               </View>
@@ -239,7 +207,7 @@ const renderItem = ({ item, index }) => {
           <View style={styles.progressToast}>
               <ActivityIndicator size="small" color="#FFF" style={{marginRight: 10}}/>
               <Text style={styles.progressText}>
-                 ডাউনলোড হচ্ছে... {bulkProgress.current} / {bulkProgress.total} ({bulkProgress.percentage}%)
+                 ডাউনলোড হচ্ছে... {bulkProgress.current} / {bulkProgress.total}
               </Text>
           </View>
       )}
@@ -248,7 +216,6 @@ const renderItem = ({ item, index }) => {
           <View style={styles.loadingContainer}>
               <Ionicons name="wifi-outline" size={80} color="#444" />
               <Text style={styles.loadingText}>কোনো ডাউনলোড করা ভিডিও নেই</Text>
-              <Text style={styles.loadingSubText}>অনলাইনে থাকাকালীন ভিডিও ডাউনলোড করুন</Text>
           </View>
       ) : (!isOffline && shortsList.length === 0) ? (
           <View style={styles.loadingContainer}>
@@ -263,9 +230,13 @@ const renderItem = ({ item, index }) => {
               pagingEnabled
               showsVerticalScrollIndicator={false}
               onViewableItemsChanged={onViewableItemsChanged}
-              viewabilityConfig={viewabilityConfig}
+              // [FIXED]: এমবি বাঁচানোর মূল অস্ত্র (অ্যাডভান্স লোডিং বন্ধ)
+              viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+              windowSize={2}
+              initialNumToRender={1}
+              maxToRenderPerBatch={1}
+              removeClippedSubviews={true}
               bounces={false}
-              windowSize={3}
           />
       )}
 
@@ -294,7 +265,7 @@ const renderItem = ({ item, index }) => {
                   <Text style={styles.modalTitle}>সেটিংস</Text>
                   <TouchableOpacity style={styles.deleteOptionBtn} onPress={deleteDownloads}>
                       <Ionicons name="trash-bin-outline" size={24} color="#FF4444" />
-                      <View style={{marginLeft: 15}}><Text style={styles.deleteTitle}>সব ডাউনলোড মুছুন</Text><Text style={styles.deleteSub}>মেমোরি থেকে সব অফলাইন ভিডিও ডিলিট হবে</Text></View>
+                      <View style={{marginLeft: 15}}><Text style={styles.deleteTitle}>সব ডাউনলোড মুছুন</Text></View>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowSettingsModal(false)}><Text style={styles.closeModalText}>বন্ধ করুন</Text></TouchableOpacity>
               </View>
@@ -308,12 +279,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
   loadingText: { color: '#FFF', fontSize: 16, marginTop: 15, fontWeight: 'bold' },
-  loadingSubText: { color: '#AAA', fontSize: 12, marginTop: 5, textAlign: 'center', paddingHorizontal: 40 },
-  progressToast: { position: 'absolute', top: 50, left: 20, right: 20, backgroundColor: 'rgba(0, 191, 165, 0.9)', padding: 12, borderRadius: 25, zIndex: 999, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#FFF' },
+  progressToast: { position: 'absolute', top: 50, left: 20, right: 20, backgroundColor: 'rgba(0, 191, 165, 0.9)', padding: 12, borderRadius: 25, zIndex: 999, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   progressText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
   shortContainer: { width: width, height: height, backgroundColor: '#000' },
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between' },
   topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 15, paddingTop: 40 },
+  backBtn: { padding: 5 },
   topRightActions: { flexDirection: 'row', alignItems: 'center' },
   topActionBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, marginLeft: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   topActionText: { color: '#FFF', fontSize: 12, fontWeight: 'bold', marginLeft: 5 },
@@ -328,7 +299,7 @@ const styles = StyleSheet.create({
   actionCol: { alignItems: 'center' },
   actionBtn: { alignItems: 'center', marginBottom: 20 },
   actionLabel: { color: '#FFF', fontSize: 12, marginTop: 5 },
-  musicThumb: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#333' },
+  musicThumb: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#333', marginTop: 10 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
   modalContent: { backgroundColor: '#1A1A1A', width: '85%', borderRadius: 20, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
   modalTitle: { color: '#FFF', fontSize: 20, fontWeight: 'bold', marginBottom: 10 },
@@ -341,7 +312,6 @@ const styles = StyleSheet.create({
   gridBtnText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
   deleteOptionBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2A2A2A', width: '100%', padding: 15, borderRadius: 12, marginBottom: 15 },
   deleteTitle: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
-  deleteSub: { color: '#888', fontSize: 11, marginTop: 2 },
   closeModalBtn: { marginTop: 15, width: '100%', alignItems: 'center' },
   closeModalText: { color: '#FF4444', fontSize: 16, fontWeight: 'bold' }
 });
