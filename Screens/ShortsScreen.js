@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Share, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Share } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,7 +15,7 @@ const UAS = {
 
 export default function ShortsScreen({ initialVideoId, route }) {
   const navigation = useNavigation();
-  const isFocused = useIsFocused();
+  const isFocused = useIsFocused(); // স্ক্রিনে ইউজার ফিরে এলে এটি true হবে
   
   const [isAutoSkipping, setIsAutoSkipping] = useState(false);
   const [shortsLoading, setShortsLoading] = useState(true);
@@ -36,12 +36,16 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
 
-  // [UPDATED]: কোয়ালিটি সেট করার ফাংশন (State Closure বাগ ফিক্স করা হয়েছে)
-  const applyQualitySettings = (qualityVal) => {
+  // সেটিংস থেকে কোয়ালিটি রিসিভ ও সেট করার ফাংশন
+  const applyQualitySettings = () => {
+    // SettingsScreen.js এর গ্লোবাল ভ্যালুটি সরাসরি রিড করা হচ্ছে
+    const qualityVal = global.shortVideoQuality || 'Normal Video Quality';
+    
     let newUA = UAS.normal;
-    if (qualityVal === 'anti') newUA = UAS.anti;
-    else if (qualityVal === 'low') newUA = UAS.low;
-    else if (qualityVal === 'high') newUA = UAS.high;
+    if (qualityVal === 'Anti Data Saver Mode') newUA = UAS.anti;
+    else if (qualityVal === 'Low Video Quality') newUA = UAS.low;
+    else if (qualityVal === 'High Video Quality 4k-8k') newUA = UAS.high;
+    else newUA = UAS.normal;
 
     setDeviceUserAgent(prevUA => {
       // যদি নতুন ইউজার-এজেন্ট আগেরটির চেয়ে আলাদা হয়, তবেই রিস্টার্ট করবে
@@ -53,25 +57,12 @@ export default function ShortsScreen({ initialVideoId, route }) {
     });
   };
 
-  // সেটিং স্ক্রিন থেকে সিগন্যাল রিসিভ করা এবং স্টোরেজ চেক করা
+  // স্ক্রিনে ফোকাস এলেই সেটিং চেক করবে 
   useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const savedQuality = await AsyncStorage.getItem('videoQuality');
-        if (savedQuality) applyQualitySettings(savedQuality);
-      } catch(e) {}
-    };
-    
-    if (isFocused) fetchSettings();
-
-    const subscription = DeviceEventEmitter.addListener('shortQualityChanged', (newQuality) => {
-      applyQualitySettings(newQuality);
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [isFocused]); // ডিপেন্ডেন্সি থেকে deviceUserAgent সরিয়ে দেওয়া হয়েছে যাতে লুপ তৈরি না হয়
+    if (isFocused) {
+      applyQualitySettings();
+    }
+  }, [isFocused]);
 
   const restartActionTimer = () => {
     setShowActionBtns(false);
@@ -136,6 +127,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
     }
   };
 
+  // ক্র্যাশ-প্রুফ ইনজেক্টেড স্ক্রিপ্ট (কোনো লেয়ার বা অবাঞ্ছিত বাটন নেই)
   const shortsInjectScript = `
     (function() {
         try {
@@ -242,11 +234,11 @@ export default function ShortsScreen({ initialVideoId, route }) {
         javaScriptEnabled={true} 
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
         containerStyle={{ flex: 1 }} 
-        incognito={true} /* [CRITICAL FIX]: কুকি সেভ হওয়া বন্ধ করবে */
-        cacheEnabled={false} /* [CRITICAL FIX]: আগের ইউজার-এজেন্ট ধরে রাখবে না */
+        incognito={true} /* কুকি ক্যাশ থেকে মুক্ত রাখার জন্য */
+        cacheEnabled={false} 
         cacheMode="LOAD_NO_CACHE"
       />
-      
+
       {showActionBtns && currentChannel.name !== '' && currentChannel.name !== 'Unknown Channel' && (
         <View style={styles.actionRowContainer} pointerEvents="box-none">
             <TouchableOpacity 
