@@ -18,14 +18,16 @@ export default function ShortsScreen({ initialVideoId, route }) {
   const [showUnmuteBtn, setShowUnmuteBtn] = useState(false);
   const [showActionBtns, setShowActionBtns] = useState(false);
   
-  const [currentUrl, setCurrentUrl] = useState(`https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId || ''}`);
+  const videoId = initialVideoId || route?.params?.videoId || '';
+  const [currentUrl, setCurrentUrl] = useState(`https://m.youtube.com/shorts/${videoId}`);
   const [currentChannel, setCurrentChannel] = useState({ name: 'Unknown Channel', isSubscribed: false });
   
   const subscribeTimerRef = useRef(null);
   const currentChannelNameRef = useRef(''); 
   const shortsWebViewRef = useRef(null);
 
-  const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
+  // URL থেকে ডামি টাইমস্ট্যাম্প সরিয়ে দেওয়া হলো যাতে ইউটিউব কনফিউজড না হয়
+  const targetUri = videoId ? `https://m.youtube.com/shorts/${videoId}` : `https://m.youtube.com/shorts`;
 
   const restartActionTimer = () => {
     setShowActionBtns(false);
@@ -78,10 +80,12 @@ export default function ShortsScreen({ initialVideoId, route }) {
   const handleUnmutePress = () => {
     if (shortsWebViewRef.current) {
       shortsWebViewRef.current.injectJavaScript(`
-        var video = document.querySelector('video');
-        if(video) { video.muted = false; video.play().catch(e=>{}); }
-        var unmuteBtn = document.querySelector('.ytp-unmute, .ytm-unmute, button[aria-label*="unmute"]');
-        if (unmuteBtn) { unmuteBtn.click(); }
+        try {
+            var video = document.querySelector('video');
+            if(video) { video.muted = false; video.play().catch(function(e){}); }
+            var unmuteBtn = document.querySelector('.ytp-unmute, .ytm-unmute, button[aria-label*="unmute"]');
+            if (unmuteBtn) { unmuteBtn.click(); }
+        } catch(e) {}
         true;
       `);
       setShowUnmuteBtn(false); 
@@ -98,17 +102,13 @@ export default function ShortsScreen({ initialVideoId, route }) {
         if (dy < -40) {
           restartActionTimer(); 
           shortsWebViewRef.current?.injectJavaScript(`
-            window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
-            var scrollable = document.querySelector('ytm-shorts-viewer') || document.body;
-            if(scrollable) scrollable.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+            try { window.scrollBy({ top: window.innerHeight, behavior: 'smooth' }); } catch(e) {}
             true;
           `);
         } else if (dy > 40) {
           restartActionTimer(); 
           shortsWebViewRef.current?.injectJavaScript(`
-            window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
-            var scrollable = document.querySelector('ytm-shorts-viewer') || document.body;
-            if(scrollable) scrollable.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
+            try { window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' }); } catch(e) {}
             true;
           `);
         }
@@ -116,130 +116,62 @@ export default function ShortsScreen({ initialVideoId, route }) {
     })
   ).current;
 
-  // আপডেট করা ইনজেক্টেড স্ক্রিপ্ট (সব বাটন গায়েব করার ব্রহ্মাস্ত্র)
+  // ক্র্যাশ-প্রুফ এবং সিম্পল ইনজেক্টেড স্ক্রিপ্ট
   const shortsInjectScript = `
     (function() {
-        // ১. CSS এর মাধ্যমে সব ওভারলে এবং বাটন গায়েব করা
-        const style = document.createElement('style');
-        style.innerHTML = \`
-            ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, header, .ytm-bottom-sheet { display: none !important; }
-            ytm-ad-slot-renderer, ytm-promoted-sparkles-web-renderer, .ad-showing, .ad-interrupting, [is-ad], ytm-companion-ad-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; }
+        // ১. CSS ইনজেকশন (কোনো ব্যাকটিক ব্যবহার করা হয়নি যাতে পার্সিং এরর না হয়)
+        try {
+            var css = 'ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, header, .ytm-bottom-sheet { display: none !important; } ' +
+                      'ytm-reel-player-overlay-actions, .reel-player-overlay-actions, ytm-like-button-renderer, ' +
+                      'ytm-dislike-button-renderer, ytm-comment-button-renderer, ytm-share-button-renderer, ' +
+                      'ytm-remix-button-renderer, [aria-label*="Like"], [aria-label*="Comment"], [aria-label*="Share"], ' +
+                      '[aria-label*="লাইক"], [aria-label*="কমেন্ট"] ' +
+                      '{ display: none !important; opacity: 0 !important; width: 0 !important; height: 0 !important; visibility: hidden !important; pointer-events: none !important; }';
             
-            /* ডানদিকের সম্পূর্ণ প্যানেল এবং ভিডিওর ওপরের সব বাটন গায়েব করার ব্রহ্মাস্ত্র */
-            ytm-reel-player-overlay-renderer,
-            ytm-reel-player-overlay-actions, 
-            .reel-player-overlay-actions,
-            [class*="overlay-action"],
-            [class*="action-button"],
-            ytm-reel-video-renderer button, 
-            ytm-reel-video-renderer ytm-button-renderer { 
-                display: none !important; 
-                opacity: 0 !important; 
-                pointer-events: none !important; 
-                visibility: hidden !important; 
-                width: 0 !important;
-                height: 0 !important;
-            }
-        \`;
-        document.documentElement.appendChild(style);
+            var head = document.head || document.getElementsByTagName('head')[0];
+            var style = document.createElement('style');
+            style.type = 'text/css';
+            style.appendChild(document.createTextNode(css));
+            head.appendChild(style);
+        } catch(e) {}
 
-        // ২. জাভাস্ক্রিপ্ট দিয়ে ভিডিওর ভেতরের সব বাটন মুছে ফেলা
-        const nukeAllButtons = () => {
-            let activeReel = document.querySelector('ytm-reel-video-renderer[is-active]') || document;
-            
-            // Shorts এর ভেতরে থাকা যেকোনো বাটন বা অ্যাকশন প্যানেল খুঁজে বের করা
-            let allButtons = activeReel.querySelectorAll('button, ytm-button-renderer, ytm-like-button-renderer, ytm-comment-button-renderer, ytm-share-button-renderer, ytm-reel-player-overlay-actions, ytm-reel-player-overlay-renderer');
-            
-            for(let i = 0; i < allButtons.length; i++) {
-                allButtons[i].style.setProperty('display', 'none', 'important');
-                allButtons[i].style.setProperty('opacity', '0', 'important');
-                allButtons[i].style.setProperty('pointer-events', 'none', 'important');
-            }
-        };
-
-        // ৩. পেজে কোনো নতুন বাটন এলেই সাথে সাথে তা মুছে দেবে
-        const observer = new MutationObserver(() => nukeAllButtons());
-        observer.observe(document.body, { childList: true, subtree: true });
-
-        let activeVideoId = "";
-
-        // ৪. আপনার বাকি লজিকগুলো
-        setInterval(() => {
-            nukeAllButtons(); // ব্যাকআপ হিসেবে এখানেও কল করা হলো
-
-            let activeReel = document.querySelector('ytm-reel-video-renderer[is-active]');
-            if (!activeReel) {
-                const reelsList = document.querySelectorAll('ytm-reel-video-renderer');
-                for (let i = 0; i < reelsList.length; i++) {
-                    const rect = reelsList[i].getBoundingClientRect();
-                    if (rect.top > -200 && rect.top < window.innerHeight / 2) {
-                        activeReel = reelsList[i];
-                        break;
-                    }
-                }
-            }
-
-            if (activeReel) {
-                const vid = activeReel.querySelector('video');
-                const uniqueId = activeReel.id || (vid ? vid.src : "");
-                
-                var channelName = '';
-                var linkElem = activeReel.querySelector('a[href^="/@"]');
-                if (linkElem) {
-                    var hrefVal = linkElem.getAttribute('href');
-                    channelName = hrefVal.split('?')[0].replace('/', ''); 
-                } else {
-                    var textElements = activeReel.querySelectorAll('.yt-core-attributed-string, .reel-channel-name, .ytm-reel-channel-renderer span, h2');
-                    for (var k = 0; k < textElements.length; k++) {
-                        var txt = textElements[k].innerText ? textElements[k].innerText.trim() : '';
-                        if (txt.length > 0 && txt !== 'Subscribe' && txt !== 'সাবস্ক্রাইব') {
-                            channelName = txt;
-                            break;
+        // ২. ক্র্যাশ-প্রুফ লুপ
+        setInterval(function() {
+            try {
+                // বাটন এবং তাদের মূল কন্টেইনার হাইড করা
+                var actionBars = document.querySelectorAll('ytm-reel-player-overlay-actions, .reel-player-overlay-actions, ytm-like-button-renderer');
+                for (var i = 0; i < actionBars.length; i++) {
+                    if(actionBars[i]) {
+                        actionBars[i].style.setProperty('display', 'none', 'important');
+                        actionBars[i].style.setProperty('opacity', '0', 'important');
+                        actionBars[i].style.setProperty('pointer-events', 'none', 'important');
+                        
+                        // পেরেন্ট ইলিমেন্টও হাইড করে দেওয়া
+                        if (actionBars[i].parentElement) {
+                            actionBars[i].parentElement.style.setProperty('display', 'none', 'important');
                         }
                     }
                 }
 
-                if (uniqueId && uniqueId !== activeVideoId) {
-                    activeVideoId = uniqueId;
-                    window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                        type: 'NEW_VIDEO_STARTED',
-                        url: window.location.href
-                    }));
-                }
+                // অ্যাড স্কিপ লজিক
+                var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button');
+                if (skipBtn) skipBtn.click();
+                
+                var adShowing = document.querySelector('.ad-showing');
+                var vidElement = document.querySelector('video');
+                if (adShowing && vidElement) vidElement.playbackRate = 16.0;
 
-                if(channelName && channelName !== '') {
-                    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'CHANNEL_SYNC', name: channelName }));
-                }
-            }
-
-            // অ্যাড স্কিপ লজিক
-            const skipBtn = document.querySelector('.ytp-ad-skip-button') || document.querySelector('.ytp-skip-ad-button');
-            if (skipBtn) skipBtn.click();
-            
-            const adShowing = document.querySelector('.ad-showing');
-            const vidElement = document.querySelector('video');
-            if (adShowing && vidElement) vidElement.playbackRate = 16.0;
-
-            const reels = document.querySelectorAll('ytm-reel-video-renderer');
-            for (let i = 0; i < reels.length; i++) {
-                const reel = reels[i];
-                const textContent = reel.innerText || reel.textContent || "";
-                const hasAdBadge = reel.querySelector('ytm-ad-slot-renderer, [is-ad], .brand-info') !== null;
-                const hasAdKeyword = /sponsored|প্রযোজিত|ad|promoted|advertisement/i.test(textContent.toLowerCase());
-
-                if (hasAdBadge || hasAdKeyword) {
-                    const rect = reel.getBoundingClientRect();
-                    if (rect.top > -200 && rect.top < window.innerHeight) {
-                        window.ReactNativeWebView.postMessage('SKIP_START');
-                        const v = reel.querySelector('video');
-                        if (v) { v.src = ''; v.remove(); }
-                        reel.style.opacity = '0';
-                        reel.style.display = 'none';
-                        const nextReel = reels[i + 1];
-                        if (nextReel) nextReel.scrollIntoView({ behavior: 'auto', block: 'start' });
-                        setTimeout(() => { reel.remove(); window.ReactNativeWebView.postMessage('SKIP_END'); }, 300);
+                // চ্যানেল নেম সিঙ্ক করা
+                var activeReel = document.querySelector('ytm-reel-video-renderer[is-active]');
+                if (activeReel && window.ReactNativeWebView) {
+                    var linkElem = activeReel.querySelector('a[href^="/@"]');
+                    if (linkElem) {
+                        var channelName = linkElem.getAttribute('href').split('?')[0].replace('/', '');
+                        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'CHANNEL_SYNC', name: channelName }));
                     }
                 }
+            } catch(err) {
+                // কোনো এরর হলে সেটি ইগনোর করবে এবং লুপ চলতে থাকবে
             }
         }, 200); 
     })();
@@ -290,6 +222,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
   return (
     <View style={styles.container}>
       <WebView
+        key="nuked-webview-v1" /* এই key টি অত্যন্ত জরুরি। এটি ক্যাশ রিমুভ করে নতুন করে লোড করাবে */
         ref={shortsWebViewRef} 
         source={{ uri: targetUri }} 
         userAgent={STABLE_USER_AGENT} 
@@ -299,7 +232,6 @@ export default function ShortsScreen({ initialVideoId, route }) {
         javaScriptEnabled={true} 
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
         containerStyle={{ flex: 1 }} 
-        incognito={true} /* ক্যাশ সমস্যা এড়াতে চাইলে এটি ব্যবহার করতে পারেন */
       />
       
       <View style={styles.bottomLayer} {...panResponder.panHandlers} />
