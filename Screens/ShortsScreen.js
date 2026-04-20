@@ -15,7 +15,7 @@ const UAS = {
 
 export default function ShortsScreen({ initialVideoId, route }) {
   const navigation = useNavigation();
-  const isFocused = useIsFocused(); // স্ক্রিনে ইউজার ফিরে এলে এটি true হবে
+  const isFocused = useIsFocused();
   
   const [isAutoSkipping, setIsAutoSkipping] = useState(false);
   const [shortsLoading, setShortsLoading] = useState(true);
@@ -36,9 +36,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
 
-  // সেটিংস থেকে কোয়ালিটি রিসিভ ও সেট করার ফাংশন
+  // [NEW]: সরাসরি গ্লোবাল ভেরিয়েবল থেকে কোয়ালিটি সেট করার ফাংশন
   const applyQualitySettings = () => {
-    // SettingsScreen.js এর গ্লোবাল ভ্যালুটি সরাসরি রিড করা হচ্ছে
+    // SettingsScreen.js থেকে গ্লোবাল ভ্যালুটি রিড করা হচ্ছে
     const qualityVal = global.shortVideoQuality || 'Normal Video Quality';
     
     let newUA = UAS.normal;
@@ -57,7 +57,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
     });
   };
 
-  // স্ক্রিনে ফোকাস এলেই সেটিং চেক করবে 
+  // স্ক্রিনে ফোকাস এলেই সেটিং চেক করবে (কোনো ইভেন্ট এমিটার বা স্টোরেজ ছাড়াই)
   useEffect(() => {
     if (isFocused) {
       applyQualitySettings();
@@ -127,7 +127,6 @@ export default function ShortsScreen({ initialVideoId, route }) {
     }
   };
 
-  // ক্র্যাশ-প্রুফ ইনজেক্টেড স্ক্রিপ্ট (কোনো লেয়ার বা অবাঞ্ছিত বাটন নেই)
   const shortsInjectScript = `
     (function() {
         try {
