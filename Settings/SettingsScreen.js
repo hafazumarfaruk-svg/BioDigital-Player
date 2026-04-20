@@ -8,8 +8,6 @@ global.appSettings = global.appSettings || {};
 global.appSettings.normalVideo = global.appSettings.normalVideo || 'Auto'; 
 global.shortVideoQuality = global.shortVideoQuality || 'Normal Video Quality';
 global.appSettings.downloadLocation = global.appSettings.downloadLocation || '/storage/emulated/0/MyTube';
-
-// [NEW]: শর্টস ক্যাশ লিমিটের জন্য গ্লোবাল ভেরিয়েবল (ডিফল্ট: 1 ঘন্টা = 3600000 মিলিসেকেন্ড)
 global.appSettings.shortsCacheLimit = global.appSettings.shortsCacheLimit || 3600000;
 
 const MY_API_SERVER = "http://127.0.0.1:10000";
@@ -25,13 +23,32 @@ export default function SettingsScreen() {
   const [downloadLocations, setDownloadLocations] = useState([{ label: 'Phone Memory', path: '/storage/emulated/0/MyTube' }]);
   const [selectedLocation, setSelectedLocation] = useState(global.appSettings.downloadLocation);
 
-  // [NEW]: ক্যাশ লিমিট স্টেট
   const [isCacheLimitExpanded, setIsCacheLimitExpanded] = useState(false);
   const [selectedCacheLimit, setSelectedCacheLimit] = useState(global.appSettings.shortsCacheLimit);
 
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
+    // শুধুমাত্র Shorts এবং Cache এর ডাটা রিড করা হচ্ছে। লং ভিডিওর ডাটা রিড করা বাদ দেওয়া হয়েছে।
+    const loadSavedSettings = async () => {
+      try {
+        const savedShortQuality = await AsyncStorage.getItem('shortVideoQualityLabel');
+        if (savedShortQuality) {
+          global.shortVideoQuality = savedShortQuality;
+          setSelectedShortQuality(savedShortQuality);
+        }
+
+        const savedCacheLimit = await AsyncStorage.getItem('shortsCacheLimit');
+        if (savedCacheLimit) {
+          const limitNum = parseInt(savedCacheLimit, 10);
+          global.appSettings.shortsCacheLimit = limitNum;
+          setSelectedCacheLimit(limitNum);
+        }
+      } catch (e) {}
+    };
+    
+    loadSavedSettings();
+
     fetch(`${MY_API_SERVER}/api/storage-info`)
       .then(res => res.json())
       .then(data => {
@@ -50,7 +67,6 @@ export default function SettingsScreen() {
       'Anti Data Saver Mode', 'Low Video Quality', 'Normal Video Quality', 'High Video Quality 4k-8k'
   ];
 
-  // [NEW]: ক্যাশ লিমিটের অপশনসমূহ (মিলিসেকেন্ডে)
   const cacheLimitOptions = [
       { label: '30 Minutes', value: 1800000 },
       { label: '1 Hour (Default)', value: 3600000 },
@@ -61,6 +77,7 @@ export default function SettingsScreen() {
       { label: '24 Hours', value: 86400000 }
   ];
 
+  // [UNCHANGED]: লং ভিডিওর ফাংশন একদম আপনার আগের কোডের মতোই রাখা হয়েছে
   const handleMainQualitySelect = (res) => {
     setIsLoading(true); 
     setTimeout(() => {
@@ -71,13 +88,24 @@ export default function SettingsScreen() {
     }, 800);
   };
 
-  const handleShortQualitySelect = (res) => {
+  // ShortsScreen এর সাথে সিঙ্ক করার জন্য AsyncStorage ব্যবহার করা হচ্ছে
+  const handleShortQualitySelect = async (res) => {
     setIsLoading(true); 
-    setTimeout(() => {
+    try {
       global.shortVideoQuality = res; 
       setSelectedShortQuality(res);
-      setIsLoading(false); 
-    }, 800);
+      
+      await AsyncStorage.setItem('shortVideoQualityLabel', res);
+
+      let storageValue = 'normal';
+      if (res === 'Low Video Quality') storageValue = 'low';
+      else if (res === 'High Video Quality 4k-8k') storageValue = 'high';
+      else if (res === 'Anti Data Saver Mode') storageValue = 'anti';
+
+      await AsyncStorage.setItem('videoQuality', storageValue); 
+    } catch (e) {}
+    
+    setTimeout(() => setIsLoading(false), 800);
   };
 
   const handleLocationSelect = (path) => {
@@ -93,14 +121,16 @@ export default function SettingsScreen() {
     }, 800);
   };
 
-  // [NEW]: ক্যাশ টাইম সেভ করার ফাংশন
-  const handleCacheLimitSelect = (val) => {
+  // ক্যাশ লিমিট সেভ করা
+  const handleCacheLimitSelect = async (val) => {
     setIsLoading(true);
-    setTimeout(() => {
+    try {
       global.appSettings.shortsCacheLimit = val;
       setSelectedCacheLimit(val);
-      setIsLoading(false);
-    }, 800);
+      await AsyncStorage.setItem('shortsCacheLimit', val.toString()); 
+    } catch (e) {}
+    
+    setTimeout(() => setIsLoading(false), 800);
   };
 
   const ExpandableMenu = ({ icon, label, expanded, onPress }) => (
@@ -161,7 +191,6 @@ export default function SettingsScreen() {
             </View>
           )}
 
-          {/* [NEW]: ক্যাশ লিমিট মেনু */}
           <ExpandableMenu 
             icon="time-outline" label="Shorts Video Cache Limit Time" 
             expanded={isCacheLimitExpanded} onPress={() => setIsCacheLimitExpanded(!isCacheLimitExpanded)} 
