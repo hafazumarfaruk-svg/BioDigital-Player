@@ -7,7 +7,7 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 
 // ৪টি আলাদা কোয়ালিটির জন্য ৪টি ভিন্ন মোবাইলের সুরত (User-Agents)
 const UAS = {
-  anti: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", // [TRICK]: Anti Data Saver এর জন্য সরাসরি কম্পিউটারের (Desktop) সুরত, যাতে কোনো ডেটা সেভার কাজ না করে।
+  anti: "Mozilla/5.0 (Linux; Android 11; LS5018 Build/RP1A.201005.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/106.0.5249.126 Mobile Safari/537.36", // [TRICK]: Anti Data Saver এর জন্য সরাসরি কম্পিউটারের (Desktop) সুরত, যাতে কোনো ডেটা সেভার কাজ না করে।
   low: "Mozilla/5.0 (Linux; Android 4.4.2; Nexus 4 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.114 Mobile Safari/537.36", // [TRICK]: অনেক পুরনো ফোন, ইউটিউব বাধ্য হয়ে লো-কোয়ালিটি দেবে।
   normal: "Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36", // সাধারণ ফোন।
   high: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UD1A.230803.041) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36" // গুগল পিক্সেল ৮ প্রো (4K)
