@@ -7,10 +7,10 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 
 // ৪টি আলাদা কোয়ালিটির জন্য ৪টি ভিন্ন মোবাইলের সুরত (User-Agents)
 const UAS = {
-  anti: "Mozilla/5.0 (Linux; Android 11; LS5018 Build/RP1A.201005.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/106.0.5249.126 Mobile Safari/537.36", // JioPhone Next (Anti Data Saver)
-  low: "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.181 Mobile Safari/537.36", // Nexus 5 (Low Quality)
-  normal: "Mozilla/5.0 (Linux; Android 11; SM-A515F Build/RP1A.200720.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36", // Galaxy A51 (Normal Quality)
-  high: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UD1A.230803.041) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36" // Pixel 8 Pro (4K-8K Quality)
+  anti: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", // [TRICK]: Anti Data Saver এর জন্য সরাসরি কম্পিউটারের (Desktop) সুরত, যাতে কোনো ডেটা সেভার কাজ না করে।
+  low: "Mozilla/5.0 (Linux; Android 4.4.2; Nexus 4 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.114 Mobile Safari/537.36", // [TRICK]: অনেক পুরনো ফোন, ইউটিউব বাধ্য হয়ে লো-কোয়ালিটি দেবে।
+  normal: "Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36", // সাধারণ ফোন।
+  high: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UD1A.230803.041) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36" // গুগল পিক্সেল ৮ প্রো (4K)
 };
 
 export default function ShortsScreen({ initialVideoId, route }) {
@@ -19,11 +19,11 @@ export default function ShortsScreen({ initialVideoId, route }) {
   
   const [isAutoSkipping, setIsAutoSkipping] = useState(false);
   const [shortsLoading, setShortsLoading] = useState(true);
+  const [uaReady, setUaReady] = useState(false); // [NEW]: User-Agent রেডি হওয়ার আগে WebView লোড হবে না
   
   const [showUnmuteBtn, setShowUnmuteBtn] = useState(false);
   const [showActionBtns, setShowActionBtns] = useState(false);
   
-  // ডাইনামিক ইউজার-এজেন্ট এবং WebView রিলোড করার Key
   const [deviceUserAgent, setDeviceUserAgent] = useState(UAS.normal);
   const [webviewKey, setWebviewKey] = useState(Date.now().toString());
   
@@ -36,31 +36,27 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
 
-  // [NEW]: সরাসরি গ্লোবাল ভেরিয়েবল থেকে কোয়ালিটি সেট করার ফাংশন
-  const applyQualitySettings = () => {
-    // SettingsScreen.js থেকে গ্লোবাল ভ্যালুটি রিড করা হচ্ছে
-    const qualityVal = global.shortVideoQuality || 'Normal Video Quality';
-    
-    let newUA = UAS.normal;
-    if (qualityVal === 'Anti Data Saver Mode') newUA = UAS.anti;
-    else if (qualityVal === 'Low Video Quality') newUA = UAS.low;
-    else if (qualityVal === 'High Video Quality 4k-8k') newUA = UAS.high;
-    else newUA = UAS.normal;
-
-    setDeviceUserAgent(prevUA => {
-      // যদি নতুন ইউজার-এজেন্ট আগেরটির চেয়ে আলাদা হয়, তবেই রিস্টার্ট করবে
-      if (prevUA !== newUA) {
-        setWebviewKey(Date.now().toString()); 
-        return newUA;
-      }
-      return prevUA;
-    });
-  };
-
-  // স্ক্রিনে ফোকাস এলেই সেটিং চেক করবে (কোনো ইভেন্ট এমিটার বা স্টোরেজ ছাড়াই)
+  // [NEW]: পুরনো সেই লজিক! WebView লোড হওয়ার আগেই কোয়ালিটি ঠিক করে নেওয়া।
   useEffect(() => {
     if (isFocused) {
-      applyQualitySettings();
+      setUaReady(false); // লোডিং শুরু
+      setShortsLoading(true);
+      
+      // গ্লোবাল ভেরিয়েবল বা স্টোরেজ থেকে ডাটা নেওয়া
+      const qualityVal = global.shortVideoQuality || 'Normal Video Quality';
+      
+      let newUA = UAS.normal;
+      if (qualityVal === 'Anti Data Saver Mode') newUA = UAS.anti;
+      else if (qualityVal === 'Low Video Quality') newUA = UAS.low;
+      else if (qualityVal === 'High Video Quality 4k-8k') newUA = UAS.high;
+
+      setDeviceUserAgent(newUA);
+      setWebviewKey(Date.now().toString()); // নতুন Key দিয়ে ফ্রেশ স্টার্ট
+      
+      // সামান্য ডিলে (Delay) দিচ্ছি যাতে স্টেট পুরোপুরি সেট হওয়ার পর WebView রেন্ডার হয়
+      setTimeout(() => {
+        setUaReady(true);
+      }, 100);
     }
   }, [isFocused]);
 
@@ -73,24 +69,21 @@ export default function ShortsScreen({ initialVideoId, route }) {
   };
 
   useEffect(() => {
-    setShortsLoading(true);
-    setShowUnmuteBtn(false);
-    
-    const timerLoading = setTimeout(() => setShortsLoading(false), 2000);
-    const timerUnmute = setTimeout(() => setShowUnmuteBtn(true), 10000); 
-    
-    restartActionTimer();
-
-    return () => { 
-      clearTimeout(timerLoading); 
-      clearTimeout(timerUnmute); 
-      if (subscribeTimerRef.current) clearTimeout(subscribeTimerRef.current);
-    };
-  }, [targetUri]);
+    if (uaReady) {
+      setShowUnmuteBtn(false);
+      const timerLoading = setTimeout(() => setShortsLoading(false), 2000);
+      const timerUnmute = setTimeout(() => setShowUnmuteBtn(true), 10000); 
+      restartActionTimer();
+      return () => { 
+        clearTimeout(timerLoading); 
+        clearTimeout(timerUnmute); 
+      };
+    }
+  }, [uaReady, targetUri]);
 
   const handleNativeSubscribe = async () => {
     let channelNameToSave = currentChannel.name;
-    if (!channelNameToSave || channelNameToSave === 'Unknown Channel' || channelNameToSave === 'Loading...') return; 
+    if (!channelNameToSave || channelNameToSave === 'Unknown Channel') return; 
 
     try {
       let subs = await AsyncStorage.getItem('subscribedChannels');
@@ -129,6 +122,12 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const shortsInjectScript = `
     (function() {
+        // [CRITICAL OLD TRICK]: ইউটিউবের ক্যাশ করা লোকাল স্টোরেজ মুছে ফেলা, যাতে সে ইউজার-এজেন্ট ভুলে যায়!
+        try {
+            window.localStorage.clear();
+            window.sessionStorage.clear();
+        } catch(e) {}
+
         try {
             var css = 'ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, header, .ytm-bottom-sheet { display: none !important; } ' +
                       'ytm-reel-player-overlay-actions, .reel-player-overlay-actions, ytm-like-button-renderer, ' +
@@ -194,11 +193,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
     else {
         try {
           const data = JSON.parse(rawData);
-          
           if (data.type === 'NEW_VIDEO_STARTED') {
               if (data.url) setCurrentUrl(data.url); 
           }
-          
           if (data.type === 'CHANNEL_SYNC' && data.name) {
               if (currentChannelNameRef.current !== data.name) {
                   currentChannelNameRef.current = data.name;
@@ -220,6 +217,15 @@ export default function ShortsScreen({ initialVideoId, route }) {
     return true;
   };
 
+  // UA রেডি হওয়ার আগে ব্ল্যাঙ্ক লোডিং স্ক্রিন দেখাবে
+  if (!uaReady) {
+    return (
+      <View style={styles.loadingOverlay}>
+        <ActivityIndicator size="large" color="#FF0000" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <WebView
@@ -233,7 +239,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
         javaScriptEnabled={true} 
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
         containerStyle={{ flex: 1 }} 
-        incognito={true} /* কুকি ক্যাশ থেকে মুক্ত রাখার জন্য */
+        incognito={true} 
         cacheEnabled={false} 
         cacheMode="LOAD_NO_CACHE"
       />
