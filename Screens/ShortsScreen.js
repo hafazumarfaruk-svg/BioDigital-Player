@@ -7,10 +7,10 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 
 // ৪টি আলাদা কোয়ালিটির জন্য ৪টি ভিন্ন মোবাইলের সুরত (User-Agents)
 const UAS = {
-  anti: "Mozilla/5.0 (Linux; Android 11; LS5018 Build/RP1A.201005.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/106.0.5249.126 Mobile Safari/537.36", // [TRICK]: Anti Data Saver এর জন্য সরাসরি কম্পিউটারের (Desktop) সুরত, যাতে কোনো ডেটা সেভার কাজ না করে।
-  low: "Mozilla/5.0 (Linux; Android 4.4.2; Nexus 4 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.114 Mobile Safari/537.36", // [TRICK]: অনেক পুরনো ফোন, ইউটিউব বাধ্য হয়ে লো-কোয়ালিটি দেবে।
-  normal: "Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36", // সাধারণ ফোন।
-  high: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UD1A.230803.041) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36" // গুগল পিক্সেল ৮ প্রো (4K)
+  anti: "Mozilla/5.0 (Linux; Android 11; LS5018 Build/RP1A.201005.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/106.0.5249.126 Mobile Safari/537.36", // JioPhone
+  low: "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.181 Mobile Safari/537.36", // Nexus 5
+  normal: "Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36", // Galaxy A51
+  high: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UD1A.230803.041) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36" // Pixel 8 Pro
 };
 
 export default function ShortsScreen({ initialVideoId, route }) {
@@ -19,13 +19,16 @@ export default function ShortsScreen({ initialVideoId, route }) {
   
   const [isAutoSkipping, setIsAutoSkipping] = useState(false);
   const [shortsLoading, setShortsLoading] = useState(true);
-  const [uaReady, setUaReady] = useState(false); // [NEW]: User-Agent রেডি হওয়ার আগে WebView লোড হবে না
+  const [uaReady, setUaReady] = useState(false); 
   
   const [showUnmuteBtn, setShowUnmuteBtn] = useState(false);
   const [showActionBtns, setShowActionBtns] = useState(false);
   
   const [deviceUserAgent, setDeviceUserAgent] = useState(UAS.normal);
   const [webviewKey, setWebviewKey] = useState(Date.now().toString());
+  
+  // [NEW]: নেটওয়ার্ক এবং হার্ডওয়্যার ফেক করার জন্য স্টেট
+  const [hardwareMockScript, setHardwareMockScript] = useState('');
   
   const [currentUrl, setCurrentUrl] = useState(`https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId || ''}`);
   const [currentChannel, setCurrentChannel] = useState({ name: 'Unknown Channel', isSubscribed: false });
@@ -36,27 +39,51 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const targetUri = initialVideoId || route?.params?.videoId ? `https://m.youtube.com/shorts/${initialVideoId || route?.params?.videoId}` : "https://m.youtube.com/shorts";
 
-  // [NEW]: পুরনো সেই লজিক! WebView লোড হওয়ার আগেই কোয়ালিটি ঠিক করে নেওয়া।
   useEffect(() => {
     if (isFocused) {
-      setUaReady(false); // লোডিং শুরু
+      setUaReady(false); 
       setShortsLoading(true);
       
-      // গ্লোবাল ভেরিয়েবল বা স্টোরেজ থেকে ডাটা নেওয়া
       const qualityVal = global.shortVideoQuality || 'Normal Video Quality';
       
       let newUA = UAS.normal;
-      if (qualityVal === 'Anti Data Saver Mode') newUA = UAS.anti;
-      else if (qualityVal === 'Low Video Quality') newUA = UAS.low;
-      else if (qualityVal === 'High Video Quality 4k-8k') newUA = UAS.high;
+      let mockJS = '';
+
+      // [CRITICAL TRICK]: পেজ লোড হওয়ার আগেই ইউটিউবকে ফেক হার্ডওয়্যার ও ফেক নেটওয়ার্ক স্পিডের তথ্য দেওয়া
+      if (qualityVal === 'Anti Data Saver Mode' || qualityVal === 'Low Video Quality') {
+        newUA = qualityVal === 'Anti Data Saver Mode' ? UAS.anti : UAS.low;
+        // ফেক 2G নেটওয়ার্ক এবং 1GB র‍্যাম, Data Saver = ON
+        mockJS = `
+          Object.defineProperty(navigator, 'connection', { get: function() { return { effectiveType: '2g', saveData: true, downlink: 0.1, rtt: 600 }; } });
+          Object.defineProperty(navigator, 'deviceMemory', { get: function() { return 1; } });
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: function() { return 2; } });
+          Object.defineProperty(window, 'devicePixelRatio', { get: function() { return 1; } });
+        `;
+      } 
+      else if (qualityVal === 'High Video Quality 4k-8k') {
+        newUA = UAS.high;
+        // ফেক 4G/5G নেটওয়ার্ক এবং 8GB র‍্যাম, Data Saver = OFF
+        mockJS = `
+          Object.defineProperty(navigator, 'connection', { get: function() { return { effectiveType: '4g', saveData: false, downlink: 10.0, rtt: 50 }; } });
+          Object.defineProperty(navigator, 'deviceMemory', { get: function() { return 8; } });
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: function() { return 8; } });
+          Object.defineProperty(window, 'devicePixelRatio', { get: function() { return 3; } });
+        `;
+      } 
+      else {
+        newUA = UAS.normal;
+        // ফেক 3G নেটওয়ার্ক
+        mockJS = `
+          Object.defineProperty(navigator, 'connection', { get: function() { return { effectiveType: '3g', saveData: false, downlink: 1.5, rtt: 150 }; } });
+          Object.defineProperty(window, 'devicePixelRatio', { get: function() { return 2; } });
+        `;
+      }
 
       setDeviceUserAgent(newUA);
-      setWebviewKey(Date.now().toString()); // নতুন Key দিয়ে ফ্রেশ স্টার্ট
+      setHardwareMockScript(mockJS);
+      setWebviewKey(Date.now().toString()); 
       
-      // সামান্য ডিলে (Delay) দিচ্ছি যাতে স্টেট পুরোপুরি সেট হওয়ার পর WebView রেন্ডার হয়
-      setTimeout(() => {
-        setUaReady(true);
-      }, 100);
+      setTimeout(() => setUaReady(true), 100);
     }
   }, [isFocused]);
 
@@ -90,11 +117,8 @@ export default function ShortsScreen({ initialVideoId, route }) {
       let parsedSubs = subs ? JSON.parse(subs) : [];
       const isSubbed = parsedSubs.some(s => s.name === channelNameToSave);
       
-      if (isSubbed) {
-        parsedSubs = parsedSubs.filter(s => s.name !== channelNameToSave);
-      } else {
-        parsedSubs.push({ id: Date.now().toString(), name: channelNameToSave, avatar: 'https://via.placeholder.com/150' });
-      }
+      if (isSubbed) parsedSubs = parsedSubs.filter(s => s.name !== channelNameToSave);
+      else parsedSubs.push({ id: Date.now().toString(), name: channelNameToSave, avatar: 'https://via.placeholder.com/150' });
       
       await AsyncStorage.setItem('subscribedChannels', JSON.stringify(parsedSubs));
       setCurrentChannel(prev => ({ ...prev, isSubscribed: !isSubbed }));
@@ -122,11 +146,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const shortsInjectScript = `
     (function() {
-        // [CRITICAL OLD TRICK]: ইউটিউবের ক্যাশ করা লোকাল স্টোরেজ মুছে ফেলা, যাতে সে ইউজার-এজেন্ট ভুলে যায়!
-        try {
-            window.localStorage.clear();
-            window.sessionStorage.clear();
-        } catch(e) {}
+        try { window.localStorage.clear(); window.sessionStorage.clear(); } catch(e) {}
 
         try {
             var css = 'ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, header, .ytm-bottom-sheet { display: none !important; } ' +
@@ -135,7 +155,6 @@ export default function ShortsScreen({ initialVideoId, route }) {
                       'ytm-remix-button-renderer, [aria-label*="Like"], [aria-label*="Comment"], [aria-label*="Share"], ' +
                       '[aria-label*="লাইক"], [aria-label*="কমেন্ট"] ' +
                       '{ display: none !important; opacity: 0 !important; width: 0 !important; height: 0 !important; visibility: hidden !important; pointer-events: none !important; }';
-            
             var head = document.head || document.getElementsByTagName('head')[0];
             var style = document.createElement('style');
             style.type = 'text/css';
@@ -151,9 +170,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
                         actionBars[i].style.setProperty('display', 'none', 'important');
                         actionBars[i].style.setProperty('opacity', '0', 'important');
                         actionBars[i].style.setProperty('pointer-events', 'none', 'important');
-                        if (actionBars[i].parentElement) {
-                            actionBars[i].parentElement.style.setProperty('display', 'none', 'important');
-                        }
+                        if (actionBars[i].parentElement) actionBars[i].parentElement.style.setProperty('display', 'none', 'important');
                     }
                 }
 
@@ -193,9 +210,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
     else {
         try {
           const data = JSON.parse(rawData);
-          if (data.type === 'NEW_VIDEO_STARTED') {
-              if (data.url) setCurrentUrl(data.url); 
-          }
+          if (data.type === 'NEW_VIDEO_STARTED') if (data.url) setCurrentUrl(data.url); 
           if (data.type === 'CHANNEL_SYNC' && data.name) {
               if (currentChannelNameRef.current !== data.name) {
                   currentChannelNameRef.current = data.name;
@@ -206,18 +221,6 @@ export default function ShortsScreen({ initialVideoId, route }) {
     }
   };
 
-  const handleShouldStartLoadWithRequest = (request) => {
-    const url = request.url;
-    if (url.includes('youtube.com/@') || url.includes('/channel/') || url.includes('/c/')) {
-      let extractedName = 'YouTube Channel';
-      if (url.includes('/@')) extractedName = '@' + url.split('/@')[1].split('/')[0].split('?')[0];
-      navigation.navigate('Channel', { channelName: extractedName });
-      return false; 
-    }
-    return true;
-  };
-
-  // UA রেডি হওয়ার আগে ব্ল্যাঙ্ক লোডিং স্ক্রিন দেখাবে
   if (!uaReady) {
     return (
       <View style={styles.loadingOverlay}>
@@ -233,11 +236,12 @@ export default function ShortsScreen({ initialVideoId, route }) {
         ref={shortsWebViewRef} 
         source={{ uri: targetUri }} 
         userAgent={deviceUserAgent} 
+        // [CRITICAL FIX]: ইউটিউব লোড হওয়ার আগেই ফেক ইন্টারনেট স্পিড ও র‍্যামের তথ্য ব্রাউজারে ইনজেক্ট করে দেওয়া হলো
+        injectedJavaScriptBeforeContentLoaded={hardwareMockScript} 
         injectedJavaScript={shortsInjectScript} 
         onMessage={onShortsMessage} 
         onLoadEnd={() => setShortsLoading(false)} 
         javaScriptEnabled={true} 
-        onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
         containerStyle={{ flex: 1 }} 
         incognito={true} 
         cacheEnabled={false} 
@@ -290,7 +294,6 @@ const styles = StyleSheet.create({
   loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', zIndex: 10 },
   skipOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', zIndex: 100 },
   skipText: { color: '#FFF', marginTop: 15, fontWeight: 'bold' },
-  
   actionRowContainer: { position: 'absolute', bottom: "20%", left: 15, flexDirection: 'row', alignItems: 'center', zIndex: 99999, elevation: 100 },
   nativeSubBtn: { backgroundColor: '#FF0000', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 25, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   nativeSubbedBtn: { backgroundColor: '#333', borderColor: '#555' },
