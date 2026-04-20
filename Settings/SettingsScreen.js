@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 global.appSettings = global.appSettings || {};
 global.appSettings.normalVideo = global.appSettings.normalVideo || 'Auto'; 
+// ডিফল্ট শর্টস কোয়ালিটি
 global.shortVideoQuality = global.shortVideoQuality || 'Normal Video Quality';
 global.appSettings.downloadLocation = global.appSettings.downloadLocation || '/storage/emulated/0/MyTube';
 global.appSettings.shortsCacheLimit = global.appSettings.shortsCacheLimit || 3600000;
@@ -28,27 +29,23 @@ export default function SettingsScreen() {
 
   const [isLoading, setIsLoading] = useState(false);
 
+  // [NEW]: অ্যাপ চালু হলে বা সেটিংসে ঢুকলে সেভ করা শর্টস কোয়ালিটি লোড করবে
   useEffect(() => {
-    // শুধুমাত্র Shorts এবং Cache এর ডাটা রিড করা হচ্ছে। লং ভিডিওর ডাটা রিড করা বাদ দেওয়া হয়েছে।
     const loadSavedSettings = async () => {
       try {
-        const savedShortQuality = await AsyncStorage.getItem('shortVideoQualityLabel');
+        const savedShortQuality = await AsyncStorage.getItem('shortVideoQuality');
         if (savedShortQuality) {
           global.shortVideoQuality = savedShortQuality;
           setSelectedShortQuality(savedShortQuality);
         }
-
-        const savedCacheLimit = await AsyncStorage.getItem('shortsCacheLimit');
-        if (savedCacheLimit) {
-          const limitNum = parseInt(savedCacheLimit, 10);
-          global.appSettings.shortsCacheLimit = limitNum;
-          setSelectedCacheLimit(limitNum);
-        }
-      } catch (e) {}
+      } catch (e) {
+        console.log(e);
+      }
     };
     
     loadSavedSettings();
 
+    // স্টোরেজ লোকেশন লোড
     fetch(`${MY_API_SERVER}/api/storage-info`)
       .then(res => res.json())
       .then(data => {
@@ -77,7 +74,7 @@ export default function SettingsScreen() {
       { label: '24 Hours', value: 86400000 }
   ];
 
-  // [UNCHANGED]: লং ভিডিওর ফাংশন একদম আপনার আগের কোডের মতোই রাখা হয়েছে
+  // লং ভিডিওর কোয়ালিটি (আপনার আগের লজিক অপরিবর্তিত রাখা হয়েছে)
   const handleMainQualitySelect = (res) => {
     setIsLoading(true); 
     setTimeout(() => {
@@ -88,21 +85,16 @@ export default function SettingsScreen() {
     }, 800);
   };
 
-  // ShortsScreen এর সাথে সিঙ্ক করার জন্য AsyncStorage ব্যবহার করা হচ্ছে
+  // [UPDATED]: শর্টস কোয়ালিটি সিলেক্ট করলে গ্লোবাল ভেরিয়েবলের পাশাপাশি স্টোরেজে সেভ হবে
   const handleShortQualitySelect = async (res) => {
     setIsLoading(true); 
     try {
+      // ১. গ্লোবাল ভেরিয়েবল আপডেট
       global.shortVideoQuality = res; 
+      // ২. UI আপডেট
       setSelectedShortQuality(res);
-      
-      await AsyncStorage.setItem('shortVideoQualityLabel', res);
-
-      let storageValue = 'normal';
-      if (res === 'Low Video Quality') storageValue = 'low';
-      else if (res === 'High Video Quality 4k-8k') storageValue = 'high';
-      else if (res === 'Anti Data Saver Mode') storageValue = 'anti';
-
-      await AsyncStorage.setItem('videoQuality', storageValue); 
+      // ৩. পার্মানেন্ট সেভ (যাতে অ্যাপ রিস্টার্ট দিলেও মনে রাখে)
+      await AsyncStorage.setItem('shortVideoQuality', res); 
     } catch (e) {}
     
     setTimeout(() => setIsLoading(false), 800);
@@ -121,16 +113,13 @@ export default function SettingsScreen() {
     }, 800);
   };
 
-  // ক্যাশ লিমিট সেভ করা
-  const handleCacheLimitSelect = async (val) => {
+  const handleCacheLimitSelect = (val) => {
     setIsLoading(true);
-    try {
+    setTimeout(() => {
       global.appSettings.shortsCacheLimit = val;
       setSelectedCacheLimit(val);
-      await AsyncStorage.setItem('shortsCacheLimit', val.toString()); 
-    } catch (e) {}
-    
-    setTimeout(() => setIsLoading(false), 800);
+      setIsLoading(false);
+    }, 800);
   };
 
   const ExpandableMenu = ({ icon, label, expanded, onPress }) => (
