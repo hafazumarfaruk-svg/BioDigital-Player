@@ -6,7 +6,6 @@ import { Video } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system'; 
-import { WebView } from 'react-native-webview';
 
 const { width, height } = Dimensions.get('window');
 const MY_API_SERVER = "http://127.0.0.1:10000"; 
@@ -34,8 +33,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
     return () => unsubscribe();
   }, []);
 
-  // [FIXED]: শক্তিশালী Auto-Retry সিস্টেম (সার্ভার রেডি না হওয়া পর্যন্ত অপেক্ষা করবে)
-  const fetchShorts = async (count = 3) => {
+  const fetchShorts = async (count = 2, retries = 0) => {
     if (isLoadingMore || isOffline) return;
     setIsLoadingMore(true);
     try {
@@ -47,20 +45,15 @@ export default function ShortsScreen({ initialVideoId, route }) {
                 const newShorts = data.shorts.filter(s => !prev.find(p => p.videoId === s.videoId));
                 return [...prev, ...newShorts];
             });
-            setIsLoadingMore(false);
-        } else {
-            // ভিডিও রেডি না থাকলে ২.৫ সেকেন্ড পর আবার ট্রাই করবে
+        } else if (retries < 5) {
             setTimeout(() => {
                 setIsLoadingMore(false);
-                fetchShorts(count);
-            }, 2500);
+                fetchShorts(count, retries + 1);
+            }, 1000);
+            return;
         }
-    } catch (e) {
-        setTimeout(() => {
-            setIsLoadingMore(false);
-            fetchShorts(count);
-        }, 3000);
-    }
+    } catch (e) {}
+    setIsLoadingMore(false);
   };
 
   const loadDownloadedData = async () => {
@@ -81,8 +74,22 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   useEffect(() => {
     const initId = initialVideoId || route?.params?.videoId;
-    if (initId && !isOffline) fetch(`${MY_API_SERVER}/api/add-shorts?ids=${initId}`).catch(()=>{});
-    if (!isOffline) fetchShorts(5); 
+    
+    const startApp = async () => {
+        if (initId && !isOffline) {
+            try {
+                // [FIXED]: প্রথম ভিডিওটি ২ সেকেন্ডে আনার জন্য Fast API
+                const fastRes = await fetch(`${MY_API_SERVER}/api/fast-short?id=${initId}`);
+                const fastData = await fastRes.json();
+                if (fastData.success) {
+                    setShortsList([fastData.short]);
+                }
+            } catch(e) {}
+        }
+        if (!isOffline) fetchShorts(2); 
+    };
+    
+    startApp();
     loadDownloadedData();
   }, []);
 
@@ -95,6 +102,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
+  // [FIXED]: App-Side Download (Fastest)
   const startBulkDownload = async (targetCount) => {
     if (!targetCount || isNaN(targetCount) || targetCount <= 0) return;
     setShowDownloadModal(false);
@@ -115,9 +123,8 @@ export default function ShortsScreen({ initialVideoId, route }) {
                 if (parsed.some(s => s.videoId === item.videoId)) continue;
 
                 const fileUri = FileSystem.documentDirectory + `perm_${item.videoId}.mp4`;
-                
                 const downloadResumable = FileSystem.createDownloadResumable(
-                    item.downloadUrl || item.url, 
+                    item.downloadUrl || item.url, // ২৪০p লিংক ব্যবহার করে দ্রুত ডাউনলোড
                     fileUri, {},
                     (p) => {
                         const progress = Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100);
@@ -132,7 +139,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
                     await AsyncStorage.setItem('permanent_shorts', JSON.stringify(parsed));
                 }
             } else {
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise(r => setTimeout(r, 1500));
             }
         } catch (e) { break; }
     }
@@ -153,32 +160,6 @@ export default function ShortsScreen({ initialVideoId, route }) {
           Alert.alert("সফল", "সব ডাউনলোড মুছে ফেলা হয়েছে।");
       } catch(e){}
   };
-
-  const hiddenScraperJS = `
-    const style = document.createElement('style');
-    style.innerHTML = 'video { display: none !important; }';
-    document.head.appendChild(style);
-
-    let seenIds = {};
-    setInterval(() => {
-        const videos = document.querySelectorAll('video');
-        videos.forEach(v => {
-            if(v.src) {
-                v.pause();
-                v.removeAttribute('src'); 
-                v.load();
-            }
-        });
-
-        const match = window.location.href.match(/\\/shorts\\/([a-zA-Z0-9_-]+)/);
-        if(match && match[1] && !seenIds[match[1]]) {
-            seenIds[match[1]] = true;
-            window.ReactNativeWebView.postMessage(match[1]);
-            window.scrollBy(0, window.innerHeight); 
-        }
-    }, 1500);
-    true;
-  `;
 const renderItem = ({ item, index }) => {
       const isPlaying = index === visibleIndex && isFocused;
       const videoUri = isOffline ? item.uri : item.url;
@@ -250,20 +231,6 @@ const renderItem = ({ item, index }) => {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="transparent" translucent barStyle="light-content" />
-      
-      {!isOffline && (
-        <View style={{ width: 0, height: 0, opacity: 0 }} pointerEvents="none">
-            <WebView 
-                source={{ uri: 'https://m.youtube.com/shorts' }}
-                injectedJavaScript={hiddenScraperJS}
-                javaScriptEnabled={true}
-                onMessage={(event) => {
-                    const extractedId = event.nativeEvent.data;
-                    if(extractedId) fetch(`${MY_API_SERVER}/api/add-shorts?ids=${extractedId}`).catch(()=>{});
-                }}
-            />
-        </View>
-      )}
 
       {isBulkDownloading && (
           <View style={styles.progressToast}>
@@ -293,9 +260,9 @@ const renderItem = ({ item, index }) => {
               showsVerticalScrollIndicator={false}
               onViewableItemsChanged={onViewableItemsChanged}
               viewabilityConfig={viewabilityConfig}
-              windowSize={2}
-              initialNumToRender={1}
-              maxToRenderPerBatch={1}
+              windowSize={3}
+              initialNumToRender={2}
+              maxToRenderPerBatch={2}
               removeClippedSubviews={true}
               bounces={false}
           />
