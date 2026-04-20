@@ -1,22 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions, PanResponder, Share } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Share } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 
-const { width, height } = Dimensions.get('window');
-const STABLE_USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36";
+// ডিফল্ট এবং বিভিন্ন কোয়ালিটির ইউজার এজেন্ট
+const HIGH_QUALITY_UA = "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"; // লেটেস্ট ফোন (High Quality)
+const LOW_QUALITY_UA = "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.181 Mobile Safari/537.36"; // পুরনো ফোন (Low Quality/Data Saver)
 
 export default function ShortsScreen({ initialVideoId, route }) {
   const navigation = useNavigation();
-  const isFocused = useIsFocused();
+  const isFocused = useIsFocused(); // সেটিংস থেকে ফিরে এলে যেন আপডেট হয়
   
   const [isAutoSkipping, setIsAutoSkipping] = useState(false);
   const [shortsLoading, setShortsLoading] = useState(true);
   
   const [showUnmuteBtn, setShowUnmuteBtn] = useState(false);
   const [showActionBtns, setShowActionBtns] = useState(false);
+  
+  // ডাইনামিক ইউজার এজেন্ট স্টেট
+  const [deviceUserAgent, setDeviceUserAgent] = useState(HIGH_QUALITY_UA);
   
   const videoId = initialVideoId || route?.params?.videoId || '';
   const [currentUrl, setCurrentUrl] = useState(`https://m.youtube.com/shorts/${videoId}`);
@@ -26,8 +30,27 @@ export default function ShortsScreen({ initialVideoId, route }) {
   const currentChannelNameRef = useRef(''); 
   const shortsWebViewRef = useRef(null);
 
-  // URL থেকে ডামি টাইমস্ট্যাম্প সরিয়ে দেওয়া হলো যাতে ইউটিউব কনফিউজড না হয়
   const targetUri = videoId ? `https://m.youtube.com/shorts/${videoId}` : `https://m.youtube.com/shorts`;
+
+  // সেটিংস থেকে কোয়ালিটি চেক করে মোবাইলের সুরত (User-Agent) পরিবর্তন করার লজিক
+  useEffect(() => {
+    const fetchQualitySettings = async () => {
+      try {
+        const savedQuality = await AsyncStorage.getItem('videoQuality'); // সেটিং স্ক্রিন থেকে সেভ করা ভ্যালু
+        if (savedQuality === 'low') {
+          setDeviceUserAgent(LOW_QUALITY_UA); // ডেটা বাঁচাতে পুরনো মোবাইলের সুরত
+        } else {
+          setDeviceUserAgent(HIGH_QUALITY_UA); // ভালো কোয়ালিটির জন্য লেটেস্ট মোবাইলের সুরত
+        }
+      } catch(e) {
+        setDeviceUserAgent(HIGH_QUALITY_UA);
+      }
+    };
+    
+    if(isFocused) {
+      fetchQualitySettings();
+    }
+  }, [isFocused]);
 
   const restartActionTimer = () => {
     setShowActionBtns(false);
@@ -92,34 +115,9 @@ export default function ShortsScreen({ initialVideoId, route }) {
     }
   };
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true, 
-      onStartShouldSetPanResponderCapture: () => false, 
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderRelease: (evt, gestureState) => {
-        const { dy } = gestureState;
-        if (dy < -40) {
-          restartActionTimer(); 
-          shortsWebViewRef.current?.injectJavaScript(`
-            try { window.scrollBy({ top: window.innerHeight, behavior: 'smooth' }); } catch(e) {}
-            true;
-          `);
-        } else if (dy > 40) {
-          restartActionTimer(); 
-          shortsWebViewRef.current?.injectJavaScript(`
-            try { window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' }); } catch(e) {}
-            true;
-          `);
-        }
-      }
-    })
-  ).current;
-
-  // ক্র্যাশ-প্রুফ এবং সিম্পল ইনজেক্টেড স্ক্রিপ্ট
+  // ক্র্যাশ-প্রুফ ইনজেক্টেড স্ক্রিপ্ট (কোনো লেয়ার বা অবাঞ্ছিত বাটন নেই)
   const shortsInjectScript = `
     (function() {
-        // ১. CSS ইনজেকশন (কোনো ব্যাকটিক ব্যবহার করা হয়নি যাতে পার্সিং এরর না হয়)
         try {
             var css = 'ytm-mobile-topbar-renderer, ytm-pivot-bar-renderer, header, .ytm-bottom-sheet { display: none !important; } ' +
                       'ytm-reel-player-overlay-actions, .reel-player-overlay-actions, ytm-like-button-renderer, ' +
@@ -135,25 +133,20 @@ export default function ShortsScreen({ initialVideoId, route }) {
             head.appendChild(style);
         } catch(e) {}
 
-        // ২. ক্র্যাশ-প্রুফ লুপ
         setInterval(function() {
             try {
-                // বাটন এবং তাদের মূল কন্টেইনার হাইড করা
                 var actionBars = document.querySelectorAll('ytm-reel-player-overlay-actions, .reel-player-overlay-actions, ytm-like-button-renderer');
                 for (var i = 0; i < actionBars.length; i++) {
                     if(actionBars[i]) {
                         actionBars[i].style.setProperty('display', 'none', 'important');
                         actionBars[i].style.setProperty('opacity', '0', 'important');
                         actionBars[i].style.setProperty('pointer-events', 'none', 'important');
-                        
-                        // পেরেন্ট ইলিমেন্টও হাইড করে দেওয়া
                         if (actionBars[i].parentElement) {
                             actionBars[i].parentElement.style.setProperty('display', 'none', 'important');
                         }
                     }
                 }
 
-                // অ্যাড স্কিপ লজিক
                 var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button');
                 if (skipBtn) skipBtn.click();
                 
@@ -161,7 +154,6 @@ export default function ShortsScreen({ initialVideoId, route }) {
                 var vidElement = document.querySelector('video');
                 if (adShowing && vidElement) vidElement.playbackRate = 16.0;
 
-                // চ্যানেল নেম সিঙ্ক করা
                 var activeReel = document.querySelector('ytm-reel-video-renderer[is-active]');
                 if (activeReel && window.ReactNativeWebView) {
                     var linkElem = activeReel.querySelector('a[href^="/@"]');
@@ -170,9 +162,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
                         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'CHANNEL_SYNC', name: channelName }));
                     }
                 }
-            } catch(err) {
-                // কোনো এরর হলে সেটি ইগনোর করবে এবং লুপ চলতে থাকবে
-            }
+            } catch(err) {}
         }, 200); 
     })();
     true;
@@ -222,10 +212,10 @@ export default function ShortsScreen({ initialVideoId, route }) {
   return (
     <View style={styles.container}>
       <WebView
-        key="nuked-webview-v1" /* এই key টি অত্যন্ত জরুরি। এটি ক্যাশ রিমুভ করে নতুন করে লোড করাবে */
+        key="nuked-webview-v2"
         ref={shortsWebViewRef} 
         source={{ uri: targetUri }} 
-        userAgent={STABLE_USER_AGENT} 
+        userAgent={deviceUserAgent} /* ডাইনামিক ইউজার এজেন্ট যুক্ত করা হয়েছে */
         injectedJavaScript={shortsInjectScript} 
         onMessage={onShortsMessage} 
         onLoadEnd={() => setShortsLoading(false)} 
@@ -234,10 +224,7 @@ export default function ShortsScreen({ initialVideoId, route }) {
         containerStyle={{ flex: 1 }} 
       />
       
-      <View style={styles.bottomLayer} {...panResponder.panHandlers} />
-      <View style={styles.rightMiddleLayer} {...panResponder.panHandlers} />
-      <View style={styles.topRightLayer} {...panResponder.panHandlers} />
-      <View style={styles.topLeftLayer} {...panResponder.panHandlers} />
+      {/* অপ্রয়োজনীয় PanResponder এবং অদৃশ্য লেয়ারগুলো পুরোপুরি রিমুভ করা হয়েছে */}
 
       {showActionBtns && currentChannel.name !== '' && currentChannel.name !== 'Unknown Channel' && (
         <View style={styles.actionRowContainer} pointerEvents="box-none">
@@ -280,18 +267,14 @@ export default function ShortsScreen({ initialVideoId, route }) {
   );
 }
 
+// স্টাইলশীট থেকে অপ্রয়োজনীয় লেয়ারগুলোর কোড মুছে ফেলা হয়েছে
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', zIndex: 10 },
   skipOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', zIndex: 100 },
   skipText: { color: '#FFF', marginTop: 15, fontWeight: 'bold' },
   
-  bottomLayer: { position: 'absolute', bottom: 0, left: 0, width: '100%', height: height / 3, backgroundColor: 'transparent', zIndex: 5 },
-  rightMiddleLayer: { position: 'absolute', top: height / 4, right: 0, width: width / 4, height: height / 2, backgroundColor: 'transparent', zIndex: 5 },
-  topRightLayer: { position: 'absolute', top: 0, right: 0, width: width / 4, height: height / 10, backgroundColor: 'transparent', zIndex: 5 },
-  topLeftLayer: { position: 'absolute', top: 0, left: 0, width: width / 2, height: height / 8, backgroundColor: 'transparent', zIndex: 5 },
-  
-  actionRowContainer: { position: 'absolute', bottom: height / 5, left: 15, flexDirection: 'row', alignItems: 'center', zIndex: 99999, elevation: 100 },
+  actionRowContainer: { position: 'absolute', bottom: "20%", left: 15, flexDirection: 'row', alignItems: 'center', zIndex: 99999, elevation: 100 },
   nativeSubBtn: { backgroundColor: '#FF0000', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 25, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   nativeSubbedBtn: { backgroundColor: '#333', borderColor: '#555' },
   nativeSubText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
