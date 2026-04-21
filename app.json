@@ -1,20 +1,18 @@
 {
   "expo": {
-    "name": "Bio-Digital Truth",
+    "name": "BioDigital-Player",
     "slug": "bio-digital-truth",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "scheme": "biodigitaltruth",
+    "newArchEnabled": true,
+    "jsEngine": "jsc",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#0F0F0F"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.imtiaz.biodigitaltruth"
@@ -22,23 +20,27 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#0F0F0F"
       },
       "package": "com.imtiaz.biodigitaltruth",
       "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_EXTERNAL_STORAGE",
+        "NOTIFICATIONS"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-av"
+      "expo-notifications",
+      "expo-media-library",
+      "expo-file-system",
+      "expo-navigation-bar"
     ],
     "extra": {
       "eas": {
-        "projectId": "a5942e98-301a-46a1-9764-ae52f7a3f69a"
+        "projectId": "আপনার-প্রজেক্ট-আইডি" 
       }
     }
   }
