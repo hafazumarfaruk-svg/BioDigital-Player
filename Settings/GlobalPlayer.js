@@ -24,8 +24,7 @@ export default function GlobalPlayer() {
   const navigation = useNavigation();
   const videoRef = useRef(null);
   const audioRef = useRef(null); 
-  const syncAudioRef = useRef(new Audio.Sound()); 
-  
+
   const seekPosRef = useRef(0);
   const currentVideoIdRef = useRef(null);
   const isLocalRef = useRef(false);
@@ -47,14 +46,6 @@ export default function GlobalPlayer() {
 
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
 
-  // [FIX]: অফলাইন ফাইল সবসময় Combined/Muxed মোডে প্লে হবে
-  const checkIsMuxed = () => {
-      if (isLocalRef.current) return true; 
-      global.appSettings = global.appSettings || {};
-      const currentQNum = parseInt(getNumericQuality(global.appSettings.normalVideo || '720'));
-      return [360, 480, 720].includes(currentQNum) || streamMode === 'combined';
-  };
-
   const setBackgroundAudio = async (enable) => {
     try {
         await Audio.setAudioModeAsync({
@@ -70,26 +61,14 @@ export default function GlobalPlayer() {
     try {
       const numQ = getNumericQuality(targetQuality);
       const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${vidId}`)}&quality=${numQ}&merge=true&t=${Date.now()}`;
-      
+
       const res = await fetch(apiUrl);
       const json = await res.json();
 
       if (json.success && json.url) {
           setStreamMode(json.streamType || 'combined');
-          setStreamUrl(json.url);
+          setStreamUrl(json.url); 
           setAudioStreamUrl(json.audioUrl || json.url); 
-
-          if (json.streamType === 'separate' && json.audioUrl) {
-              try {
-                  await syncAudioRef.current.unloadAsync();
-                  await syncAudioRef.current.loadAsync(
-                      { uri: json.audioUrl },
-                      { shouldPlay: true, positionMillis: seekPosRef.current, progressUpdateIntervalMillis: 100 }
-                  );
-              } catch(e) {}
-          } else {
-              try { await syncAudioRef.current.unloadAsync(); } catch(e){}
-          }
 
           setIsPlaying(true);
           setErrorMsg(null);
@@ -107,23 +86,6 @@ export default function GlobalPlayer() {
         seekPosRef.current = 0; 
         try { await videoRef.current.setPositionAsync(pos); } catch(e){}
     }
-
-    if (streamMode === 'separate' && syncAudioRef.current && status.isLoaded && !isAudioMode) {
-        try {
-            const audioStatus = await syncAudioRef.current.getStatusAsync();
-            if (!audioStatus.isLoaded) return;
-
-            if (status.isPlaying && !audioStatus.isPlaying) {
-                await syncAudioRef.current.playAsync();
-            } else if (!status.isPlaying && audioStatus.isPlaying) {
-                await syncAudioRef.current.pauseAsync();
-            }
-
-            if (status.isPlaying && Math.abs(status.positionMillis - audioStatus.positionMillis) > 500) {
-                await syncAudioRef.current.setPositionAsync(status.positionMillis);
-            }
-        } catch(e) {}
-    }
   };
 
   useEffect(() => {
@@ -131,7 +93,7 @@ export default function GlobalPlayer() {
       const savedQuality = global.appSettings?.normalVideo || '720p';
       if (savedQuality !== currentQuality && currentVideoIdRef.current && !isLocalRef.current) {
           setCurrentQuality(savedQuality); 
-          
+
           let currentPos = 0;
           if (videoRef.current) {
               try {
@@ -145,13 +107,12 @@ export default function GlobalPlayer() {
           setIsPlaying(false); 
           setStreamUrl(null);  
           setErrorMsg(null);
-          
+
           if (audioRef.current) {
               try { await audioRef.current.unloadAsync(); } catch(e){}
               audioRef.current = null;
           }
-          try { await syncAudioRef.current.unloadAsync(); } catch(e){}
-          
+
           setVideoKey(Date.now().toString()); 
           await fetchStreamUrl(currentVideoIdRef.current, savedQuality);
       }
@@ -167,48 +128,25 @@ export default function GlobalPlayer() {
         await setBackgroundAudio(true); 
 
         try {
-            const isMuxed = checkIsMuxed();
-
-            if (isMuxed) {
-                if (videoRef.current) {
-                    try { await videoRef.current.playAsync(); } catch(e){}
-                }
-                setIsPlaying(true);
-            } else {
-                let currentPos = 0;
-                if (videoRef.current) {
-                    try {
-                        const status = await videoRef.current.getStatusAsync();
-                        currentPos = status.positionMillis || 0;
-                        await videoRef.current.pauseAsync(); 
-                    } catch(e){}
-                }
-                if (syncAudioRef.current) {
-                    try { await syncAudioRef.current.pauseAsync(); } catch(e){}
-                }
-
-                let targetAudioUrl = null; 
-                if (!isLocalRef.current && currentVideoIdRef.current) {
-                    try {
-                        const apiUrl = `${MY_API_SERVER}/api/extract?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${currentVideoIdRef.current}`)}&quality=240&merge=true&type=audio&t=${Date.now()}`;
-                        const res = await fetch(apiUrl);
-                        const json = await res.json();
-                        if (json.success && json.audioUrl) targetAudioUrl = json.audioUrl;
-                        else if (json.success && json.url) targetAudioUrl = json.url; 
-                    } catch(e) {}
-                }
-
-                if (!targetAudioUrl) targetAudioUrl = audioStreamUrl || streamUrl;
-
+            let currentPos = 0;
+            if (videoRef.current) {
                 try {
-                    const { sound } = await Audio.Sound.createAsync(
-                        { uri: targetAudioUrl },
-                        { shouldPlay: true, positionMillis: currentPos } 
-                    );
-                    audioRef.current = sound;
-                    setIsPlaying(true);
+                    const status = await videoRef.current.getStatusAsync();
+                    currentPos = status.positionMillis || 0;
+                    await videoRef.current.pauseAsync(); 
                 } catch(e){}
             }
+
+            const targetAudioUrl = audioStreamUrl || streamUrl;
+
+            try {
+                const { sound } = await Audio.Sound.createAsync(
+                    { uri: targetAudioUrl },
+                    { shouldPlay: true, positionMillis: currentPos } 
+                );
+                audioRef.current = sound;
+                setIsPlaying(true);
+            } catch(e){}
         } catch (error) {}
         setIsSwitching(false);
     };
@@ -220,19 +158,7 @@ export default function GlobalPlayer() {
         await setBackgroundAudio(false); 
 
         try {
-            const isMuxed = checkIsMuxed();
-
-            if (isMuxed) {
-                if (videoRef.current) {
-                    try { await videoRef.current.playAsync(); } catch(e){}
-                }
-                setIsPlaying(true);
-                setIsSwitching(false);
-                return;
-            }
-
             let currentPos = 0;
-            
             if (audioRef.current) {
                 try {
                     const status = await audioRef.current.getStatusAsync();
@@ -246,13 +172,6 @@ export default function GlobalPlayer() {
                 if (videoRef.current) {
                     await videoRef.current.setPositionAsync(currentPos);
                     await videoRef.current.playAsync(); 
-                }
-            } catch(e){}
-
-            try {
-                if (syncAudioRef.current && streamMode === 'separate') {
-                    await syncAudioRef.current.setPositionAsync(currentPos);
-                    await syncAudioRef.current.playAsync();
                 }
             } catch(e){}
 
@@ -279,7 +198,6 @@ export default function GlobalPlayer() {
           try { await audioRef.current.unloadAsync(); } catch(e){}
           audioRef.current = null; 
       }
-      try { await syncAudioRef.current.unloadAsync(); } catch(e){}
 
       setIsAudioMode(isAudio);
       isAudioModeRef.current = isAudio;
@@ -297,7 +215,7 @@ export default function GlobalPlayer() {
       pan.setValue({ x: 0, y: 0 });
 
       if (isLocalRef.current) {
-          setStreamMode('combined'); // অফলাইন ভিডিওর জন্য
+          setStreamMode('combined');
           setStreamUrl(data.videoData.localUri);
           setAudioStreamUrl(data.videoData.localUri);
           return;
@@ -321,7 +239,6 @@ export default function GlobalPlayer() {
       await setBackgroundAudio(false); 
       if (videoRef.current) { try { await videoRef.current.pauseAsync(); } catch(e){} }
       if (audioRef.current) { try { await audioRef.current.unloadAsync(); audioRef.current = null; } catch(e){} }
-      try { await syncAudioRef.current.unloadAsync(); } catch(e){}
 
       setPlayerState('hidden');
       setStreamUrl(null);
@@ -329,19 +246,12 @@ export default function GlobalPlayer() {
       setIsPlaying(false);
     });
 
-    return () => { 
-        playSub.remove(); 
-        minSub.remove(); 
-        maxSub.remove(); 
-        toggleAudioSub.remove(); 
-        stopSub.remove(); 
-    };
+    return () => { playSub.remove(); minSub.remove(); maxSub.remove(); toggleAudioSub.remove(); stopSub.remove(); };
   }, [videoData, streamUrl, audioStreamUrl, streamMode]); 
 
   useEffect(() => {
     return () => {
       if (audioRef.current) { try{ audioRef.current.unloadAsync(); } catch(e){} }
-      try { syncAudioRef.current.unloadAsync(); } catch(e){}
     };
   }, []);
 
@@ -361,11 +271,9 @@ export default function GlobalPlayer() {
 
   if (playerState === 'hidden') return null;
   const isFull = playerState === 'full';
-  
-  const isCurrentlyMuxed = checkIsMuxed();
-  const shouldVideoPlay = isPlaying && (!isAudioMode || isCurrentlyMuxed);
 
-  // [FIX]: অফলাইন অডিওর জন্য ভিডিও ভিউ হাইড করা হবে না, যাতে কন্ট্রোল প্যানেল কাজ করে
+  // [FIXED]: অফলাইন বা অডিও মোডের কন্ট্রোল ঠিক রাখা হয়েছে
+  const shouldVideoPlay = isPlaying && !isAudioMode;
   const hideVideo = isAudioMode && !isLocalRef.current;
   const showCustomPoster = isAudioMode && !isLocalRef.current;
 
@@ -376,7 +284,7 @@ export default function GlobalPlayer() {
      >
         <TouchableOpacity activeOpacity={0.9} style={styles.touchable} onPress={() => { if (!isFull && videoData) navigation.navigate('Player', { videoId: videoData.id, videoData }); }}>
            <View style={isFull ? styles.fullVideoWrapper : styles.miniVideoWrapper}>
-               
+
                {errorMsg ? (
                   <View style={styles.loadingBox}>
                       <Ionicons name="warning-outline" size={isFull ? 40 : 24} color="#FF4444" />
@@ -392,9 +300,8 @@ export default function GlobalPlayer() {
                       source={{ uri: streamUrl }} 
                       style={styles.video} 
                       shouldPlay={shouldVideoPlay} 
-                      isMuted={streamMode === 'separate'} 
-                      
-                      // [FIX]: অফলাইন অডিওতেও কন্ট্রোল প্যানেল এবং পোস্টার দেখানো হবে
+                      isMuted={false} // [CRITICAL FIX]: এখন ভিডিও নিজেই অডিও চালাবে
+
                       useNativeControls={isFull && (!isAudioMode || isLocalRef.current)} 
                       usePoster={isAudioMode && isLocalRef.current}
                       posterSource={{ uri: videoData?.thumbnail }}
@@ -430,7 +337,7 @@ export default function GlobalPlayer() {
                {!isFull && (
                   <View style={[styles.overlay, isAudioMode ? {zIndex: 20} : {}]}>
                      <TouchableOpacity style={styles.miniPlayBtn} onPress={async () => {
-                         if (isAudioMode && !isCurrentlyMuxed && audioRef.current) {
+                         if (isAudioMode && audioRef.current) {
                              const status = await audioRef.current.getStatusAsync();
                              if (status?.isPlaying) { await audioRef.current.pauseAsync(); setIsPlaying(false); } 
                              else { await audioRef.current.playAsync(); setIsPlaying(true); }
@@ -446,7 +353,6 @@ export default function GlobalPlayer() {
                          await setBackgroundAudio(false); 
                          if (videoRef.current) { try { await videoRef.current.pauseAsync(); } catch(e){} }
                          if (audioRef.current) { try { await audioRef.current.unloadAsync(); audioRef.current = null; } catch(e){} }
-                         try { await syncAudioRef.current.unloadAsync(); } catch(e){}
                          setPlayerState('hidden'); setVideoData(null); setStreamUrl(null); setAudioStreamUrl(null); pan.setValue({ x:0, y:0 });
                      }}>
                         <Ionicons name="close" size={24} color="#FFF" />
@@ -468,14 +374,14 @@ const styles = StyleSheet.create({
   videoCoreWrapper: { flex: 1, width: '100%', height: '100%' },
   hiddenVideoStyle: { position: 'absolute', opacity: 0, width: 1, height: 1, left: -9999 },
   video: { width: '100%', height: '100%' },
-  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' },
-  switchingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 50, justifyContent: 'center', alignItems: 'center' },
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0, 0, 0, 0.2)' },
-  miniPlayBtn: { position: 'absolute', top: '50%', left: 10, marginTop: -13 },
-  miniCloseBtn: { position: 'absolute', top: 4, right: 4, padding: 2 },
-  audioPosterContainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, backgroundColor: '#111' },
-  audioPosterBg: { width: '100%', height: '100%', opacity: 0.5 },
-  audioPosterOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
-  audioIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0, 191, 165, 0.1)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#00BFA5', marginBottom: 10 },
-  audioPosterText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' }
+  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  switchingOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  audioPosterContainer: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+  audioPosterBg: { ...StyleSheet.absoluteFillObject, opacity: 0.5 },
+  audioPosterOverlay: { alignItems: 'center', justifyContent: 'center' },
+  audioIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0,191,165,0.3)', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  audioPosterText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
+  miniPlayBtn: { padding: 10 },
+  miniCloseBtn: { padding: 10 },
 });
