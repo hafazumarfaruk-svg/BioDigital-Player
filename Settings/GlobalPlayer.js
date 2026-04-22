@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Dimensions, Animated, PanResponder, TouchableOpacity, Text, ActivityIndicator, Image, LogBox } from 'react-native';
 import { Audio } from 'expo-av'; // অডিও এবং ব্যাকগ্রাউন্ডের জন্য
@@ -94,14 +95,14 @@ export default function GlobalPlayer() {
           setIsPlaying(true);
           setErrorMsg(null);
       } else {
-          setErrorMsg("This quality video is not available");
+          setErrorMsg("সার্ভার থেকে সঠিক ভিডিও লিংক পাওয়া যায়নি!");
       }
     } catch(e) { 
-      setErrorMsg("সার্ভার কানেকশন এরর!");
+      // [UPDATED]: সার্ভার বন্ধ থাকলে যাতে ইউজার স্পষ্ট মেসেজ পায়
+      setErrorMsg("সার্ভার কানেকশন এরর! Termux চালু আছে কিনা চেক করুন।");
     }
   };
 
-  // [UPDATED]: react-native-video এর জন্য নতুন সিঙ্ক লজিক
   const handleProgress = async (data) => {
     const currentPosMillis = data.currentTime * 1000;
 
@@ -116,7 +117,6 @@ export default function GlobalPlayer() {
                 await syncAudioRef.current.pauseAsync();
             }
 
-            // যদি অডিও-ভিডিওর গ্যাপ ৭০০ মিলিসেকেন্ডের বেশি হয়, তবে সিঙ্ক করবে
             if (isPlaying && Math.abs(currentPosMillis - audioStatus.positionMillis) > 700) {
                 await syncAudioRef.current.setPositionAsync(currentPosMillis);
             }
@@ -332,16 +332,27 @@ export default function GlobalPlayer() {
                       ref={videoRef}
                       source={{ uri: streamUrl }}
                       style={styles.video}
-                      paused={!shouldVideoPlay}  // [NEW]: react-native-video এর জন্য shouldPlay এর বদলে paused
+                      paused={!shouldVideoPlay}
                       muted={streamMode === 'separate'}
                       controls={isFull && (!isAudioMode || isLocalRef.current)}
                       resizeMode={isFull ? "contain" : "cover"}
-                      onProgress={handleProgress} // [NEW]: সিঙ্ক করার ইভেন্ট
+                      onProgress={handleProgress}
                       onLoad={(meta) => {
                          if (seekPosRef.current > 0) {
                              videoRef.current.seek(seekPosRef.current / 1000);
                              seekPosRef.current = 0;
                          }
+                      }}
+                      // [NEW]: ভিডিও প্লে হতে সমস্যা হলে বা লিংক এক্সপায়ার হলে ইউজারকে মেসেজ দেবে
+                      onError={(err) => {
+                         setErrorMsg("ভিডিও ইঞ্জিন এরর! ভিডিওটি প্লে করা যাচ্ছে না।");
+                      }}
+                      // [NEW]: বাফারিং কমানো এবং প্লেয়ারকে স্মুথ করার জন্য বাফার কনফিগ
+                      bufferConfig={{
+                        minBufferMs: 15000,
+                        maxBufferMs: 50000,
+                        bufferForPlaybackMs: 2500,
+                        bufferForPlaybackAfterRebufferMs: 5000
                       }}
                     />
                   </View>
