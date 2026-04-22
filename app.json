@@ -18,9 +18,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.imtiaz.biodigitaltruth",
       "infoPlist": {
-        "UIBackgroundModes": [
-          "audio"
-        ]
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {
