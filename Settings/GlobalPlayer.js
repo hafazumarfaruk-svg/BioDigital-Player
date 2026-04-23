@@ -97,7 +97,7 @@ export default function GlobalPlayer() {
           setErrorMsg("সার্ভার থেকে সঠিক ভিডিও লিংক পাওয়া যায়নি!");
       }
     } catch(e) { 
-      setErrorMsg("সার্ভার কানেকশন এরর! Termux চেক করুন।");
+      setErrorMsg(`Fetch Error: ${e.message}`);
     }
   };
 
@@ -157,8 +157,10 @@ export default function GlobalPlayer() {
                     const { sound } = await Audio.Sound.createAsync( { uri: targetAudioUrl }, { shouldPlay: true } );
                     audioRef.current = sound;
                     setIsPlaying(true);
-                    setErrorMsg(null); // অডিও শুরু হলে এরর মুছে ফেলুন
-                } catch(e){}
+                    setErrorMsg(null);
+                } catch(e){
+                    setErrorMsg(`Audio Error: ${e.message}`);
+                }
             }
         } catch (error) {}
         setIsSwitching(false);
@@ -254,7 +256,6 @@ export default function GlobalPlayer() {
         <TouchableOpacity activeOpacity={0.9} style={styles.touchable} onPress={() => { if (!isFull && videoData) navigation.navigate('Player', { videoId: videoData.id, videoData }); }}>
            <View style={isFull ? styles.fullVideoWrapper : styles.miniVideoWrapper}>
 
-               {/* [FIXED]: এরর থাকলেও অডিও মোডে পোস্টার দেখাবে */}
                {errorMsg && !showCustomPoster ? (
                   <View style={styles.loadingBox}>
                       <Ionicons name="warning-outline" size={isFull ? 40 : 24} color="#FF4444" />
@@ -265,7 +266,6 @@ export default function GlobalPlayer() {
                     <Video 
                       key={videoKey}
                       ref={videoRef}
-                      // [UPDATED]: Headers যুক্ত করা হয়েছে যাতে ইউটিউব লিংক প্লে হয়
                       source={{ 
                         uri: streamUrl,
                         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
@@ -277,7 +277,15 @@ export default function GlobalPlayer() {
                       resizeMode={isFull ? "contain" : "cover"}
                       onProgress={handleProgress}
                       onLoad={() => { if (seekPosRef.current > 0) { videoRef.current.seek(seekPosRef.current / 1000); seekPosRef.current = 0; } }}
-                      onError={() => { if(!isAudioMode) setErrorMsg("ভিডিও ইঞ্জিন এরর! ভিডিওটি প্লে করা যাচ্ছে না।"); }}
+                      
+                      // [UPDATED]: এখানে আসল এররটি ক্যাপচার করা হয়েছে
+                      onError={(err) => { 
+                          if(!isAudioMode) {
+                              const detail = err?.error?.errorString || err?.error?.message || err?.error?.code || "Unknown Format Error";
+                              setErrorMsg(`Player Error: ${detail}`);
+                          }
+                      }}
+                      
                       bufferConfig={{ minBufferMs: 15000, maxBufferMs: 50000, bufferForPlaybackMs: 2500, bufferForPlaybackAfterRebufferMs: 5000 }}
                       playInBackground={true}
                       ignoreSilentSwitch={"ignore"}
