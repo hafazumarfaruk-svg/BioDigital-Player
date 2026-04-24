@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Dimensions, Animated, PanResponder, TouchableOpacity, Text, ActivityIndicator, Image, LogBox } from 'react-native';
 import { Audio } from 'expo-av'; // অডিও এবং ব্যাকগ্রাউন্ডের জন্য
-import Video from 'react-native-video'; // [NEW]: মেইন ভিডিওর জন্য নেটিভ প্যাকেজ
+import Video from 'expo-av'; // [NEW]: মেইন ভিডিওর জন্য নেটিভ প্যাকেজ
 import { Ionicons } from '@expo/vector-icons';
 import { DeviceEventEmitter } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
