@@ -1,0 +1,17 @@
+{
+  "cli": { "version": ">= 3.0.0" },
+  "build": {
+    "preview": {
+      "workflow": "bare",
+      "android": { "buildType": "apk" }
+    },
+    "production": {
+      "workflow": "bare",
+      "android": { "buildType": "app-bundle" }
+    },
+    "development": {
+      "workflow": "bare",
+      "android": { "buildType": "apk" }
+    }
+  }
+}
