@@ -78,9 +78,9 @@ export default function PlayerScreen({ route, navigation }) {
       // [FIXED]: অরিজিনাল নাম ঠিক রাখার জন্য লজিক আপডেট করা হয়েছে (স্পেস এবং বাংলা ঠিক থাকবে)
       const safeTitle = (videoData.title || 'video').replace(/[<>:"\/\\|?*]+/g, '').trim();
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      
+
       const dlApiUrl = `${MY_API_SERVER}/api/aria-download?id=${downloadId}&url=${encodeURIComponent(targetUrl)}&quality=${encodeURIComponent(item.quality)}&type=${downloadType}&title=${encodeURIComponent(safeTitle)}`;
-      
+
       const response = await fetch(dlApiUrl);
       const resJson = await response.json();
 
